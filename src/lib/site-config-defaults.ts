@@ -49,7 +49,7 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
       {
         year: "2022",
         title: "Expansión regional",
-        desc: "Producciones con artistas de Medellín y conexiones con México, siempre con el Caribe en la mezcla.",
+        desc: "Producciones con artistas en Medellín y otras ciudades, siempre con el Caribe en la mezcla.",
       },
       {
         year: "2026",
@@ -124,9 +124,9 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
       "Crew XMEN. María La Baja, Bolívar — cerca de Cartagena y de la cuna de la champeta — con presencia en Medellín y más allá.",
     producerLabel: "Productor principal",
     producerName: "JeiVy LaZy",
-    producerGenres: ["Champeta", "Trap", "Reggaeton", "Afrobeat", "Dancehall"],
+    producerGenres: ["Reggaeton", "Trap", "Afrobeat"],
     producerBio:
-      "Productor y artista principal del sello. Todo arranca en María La Baja, junto a Cartagena, donde la champeta y los ritmos africanos marcaron el barrio: de ahí sale la visión que hoy cruza trap, reggaeton, afrobeat y dancehall con identidad palenquera y caribeña. Más de una década con el crew XMEN.",
+      "Productor y artista principal del sello. Todo arranca en María La Baja, junto a Cartagena, donde la champeta y los ritmos africanos marcaron el barrio: de ahí sale la visión que hoy cruza reggaeton, trap y afrobeat con identidad palenquera y caribeña. Más de una década con el crew XMEN.",
     primaryCtaLabel: "Agendar sesión con JeiVy",
     crewSectionTitle: "CREW XMEN",
     crewSectionDescription:
@@ -135,17 +135,17 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
     members: [
       {
         name: "J Col",
-        genre: "Champeta · Trap · Reggaeton",
+        genre: "Reggaeton · Trap · Afrobeat",
         bio: "Movimiento urbano local con melódica y narrativa de calle, con la champeta y el Caribe en la referencia.",
       },
       {
         name: "El Fammy",
-        genre: "Reggaeton · Dancehall",
-        bio: "Energía de tarima: reggaeton y dancehall con el sabor que se cría cerca de Cartagena y la costa.",
+        genre: "Reggaeton · Trap · Afrobeat",
+        bio: "Energía de tarima: reggaeton, trap y afrobeat con el sabor que se cría cerca de Cartagena y la costa.",
       },
       {
         name: "El Vega",
-        genre: "Trap · Afrobeat",
+        genre: "Reggaeton · Trap · Afrobeat",
         bio: "Sonido oscuro entre trap y afrobeat, con la raíz de María La Baja y el eco de la champeta en la mezcla.",
       },
     ],
@@ -161,10 +161,10 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
   productionsPage: {
     metaTitle: "Producciones",
     metaDescription:
-      "Más de 50 producciones con artistas de Colombia, México y el Caribe. El portafolio completo de Sodimusic Company.",
+      "Más de 50 producciones con artistas de Colombia y el Caribe. El portafolio completo de Sodimusic Company.",
     heroTitle: "PRODUCIDO POR SODIMUSIC",
     heroDescriptionTemplate:
-      "Desde María La Baja —donde la champeta y los ritmos africanos marcaron el inicio— hasta Ciudad de México: {{total}} producciones con artistas del Caribe y América Latina. Aquí está ese trabajo.",
+      "Desde María La Baja —donde la champeta y los ritmos africanos marcaron el inicio— {{total}} producciones con artistas de Colombia, el Caribe y más allá. Aquí está ese trabajo.",
     catalogCountLineTemplate: "{{total}} producciones en el catálogo",
   },
   releasesPage: {
