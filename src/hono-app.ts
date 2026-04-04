@@ -54,13 +54,8 @@ function corsAllowedOrigins(): string[] {
     .filter(Boolean);
 }
 
-/**
- * En Vercel, `FRONTEND_URL` a veces no llega al runtime del preset Hono; el navegador sí manda `Origin`.
- * Permitimos el front de producción y previews del mismo proyecto (`sodimusic-frontend*.vercel.app`).
- */
+/** Si `FRONTEND_URL` no llega al runtime (Vercel/Hono), el `Origin` del navegador sigue siendo fiable para estos hosts. */
 function isTrustedSodimusicFrontendOrigin(origin: string): boolean {
-  const onVercel = process.env["VERCEL"] === "1" || Boolean(process.env["VERCEL_ENV"]);
-  if (!onVercel) return false;
   try {
     const { protocol, hostname } = new URL(origin);
     if (protocol !== "https:" || !hostname.endsWith(".vercel.app")) return false;
