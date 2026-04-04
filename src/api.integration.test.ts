@@ -22,6 +22,17 @@ describe.skipIf(!hasDb)("Integración API + Prisma (DATABASE_URL)", () => {
     expect(typeof (j.content as { brand?: unknown }).brand).toBe("object");
   });
 
+  it("POST /api/public/page-view registra vista", async () => {
+    const res = await app.request("http://localhost/api/public/page-view", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "/booking" }),
+    });
+    expect(res.status).toBe(200);
+    const j = (await res.json()) as { ok?: boolean };
+    expect(j.ok).toBe(true);
+  });
+
   it("GET /api/productions lista paginada", async () => {
     const res = await app.request("http://localhost/api/productions?pageSize=2");
     expect(res.status).toBe(200);
@@ -106,9 +117,17 @@ describe.skipIf(!hasDb)("Integración API + Prisma (DATABASE_URL)", () => {
         sessionsWeek: number;
         beatsAvailable: number;
         productionsTotal: number;
+        pageViewsTotal: number;
+        pageViewsLast7Days: number;
+        pageViewsByDay: { date: string; count: number }[];
+        sessionsCreatedByDay: { date: string; count: number }[];
+        sessionsByStatus: { status: string; count: number }[];
       };
       expect(typeof j.pendingSessions).toBe("number");
       expect(typeof j.productionsTotal).toBe("number");
+      expect(typeof j.pageViewsTotal).toBe("number");
+      expect(Array.isArray(j.pageViewsByDay)).toBe(true);
+      expect(Array.isArray(j.sessionsByStatus)).toBe(true);
     });
 
     it("GET /api/admin/sessions", async () => {

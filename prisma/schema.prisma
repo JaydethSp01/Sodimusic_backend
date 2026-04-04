@@ -121,3 +121,12 @@ model SiteConfig {
   draftUpdatedAt  DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }
+
+/// Vista de página pública (para métricas en el panel admin). Sin datos personales.
+model PageView {
+  id        String   @id @default(cuid())
+  path      String   @default("/")
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

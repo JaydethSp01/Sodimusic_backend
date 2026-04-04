@@ -15,6 +15,7 @@ import {
   parseISO,
   startOfDay,
   startOfMonth,
+  subDays,
 } from "date-fns";
 import { randomUUID } from "crypto";
 import { extname, join } from "path";
@@ -42,6 +43,13 @@ if (!JWT_SECRET) {
 }
 
 type AdminVars = { adminId: string; adminEmail: string };
+
+function normalizePublicPath(raw: unknown): string {
+  if (typeof raw !== "string") return "/";
+  const t = raw.trim().slice(0, 512);
+  if (!t.startsWith("/") || t.includes("..")) return "/";
+  return t.length ? t : "/";
+}
 
 /** Orígenes explícitos (env + localhost). Sin barra final. */
 function corsAllowedOrigins(): string[] {
@@ -438,6 +446,26 @@ export function createApp(): Hono {
     return c.json({ content, publishedAt: row?.publishedAt ?? null });
   });
 
+  /** Registro ligero de vistas (sin cookies ni PII). Usado solo desde el sitio público. */
+  app.post("/api/public/page-view", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      body = {};
+    }
+    const path = normalizePublicPath(
+      typeof body === "object" && body !== null && "path" in body ? (body as { path?: unknown }).path : "/",
+    );
+    try {
+      await prisma.pageView.create({ data: { path } });
+    } catch (e) {
+      console.warn("page-view insert failed", e);
+      return c.json({ ok: false }, 500);
+    }
+    return c.json({ ok: true });
+  });
+
   app.get("/uploads/:name", async (c) => {
     const name = c.req.param("name");
     if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
@@ -492,14 +520,66 @@ export function createApp(): Hono {
   admin.get("/dashboard/stats", async (c) => {
     const now = new Date();
     const weekEnd = addDays(now, 7);
-    const [pendingSessions, sessionsWeek, beatsAvailable, productionsTotal] = await Promise.all([
-      prisma.bookingSession.count({ where: { status: "PENDING" } }),
-      prisma.bookingSession.count({
-        where: { scheduledDate: { gte: startOfDay(now), lte: weekEnd } } }),
-      prisma.beat.count({ where: { status: "AVAILABLE" } }),
-      prisma.production.count(),
-    ]);
-    return c.json({ pendingSessions, sessionsWeek, beatsAvailable, productionsTotal });
+    const rangeStart = startOfDay(subDays(now, 13));
+    const rangeEnd = startOfDay(now);
+    const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
+
+    const [pendingSessions, sessionsWeek, beatsAvailable, productionsTotal, pageViewsTotal, sessionsByStatusRows] =
+      await Promise.all([
+        prisma.bookingSession.count({ where: { status: "PENDING" } }),
+        prisma.bookingSession.count({
+          where: { scheduledDate: { gte: startOfDay(now), lte: weekEnd } } }),
+        prisma.beat.count({ where: { status: "AVAILABLE" } }),
+        prisma.production.count(),
+        prisma.pageView.count(),
+        prisma.bookingSession.groupBy({ by: ["status"], _count: { _all: true } }),
+      ]);
+
+    let pageViewsByDay: { date: string; count: number }[] = [];
+    let sessionsCreatedByDay: { date: string; count: number }[] = [];
+    try {
+      [pageViewsByDay, sessionsCreatedByDay] = await Promise.all([
+        Promise.all(
+          days.map(async (d) => ({
+            date: format(d, "yyyy-MM-dd"),
+            count: await prisma.pageView.count({
+              where: { createdAt: { gte: startOfDay(d), lte: endOfDay(d) } },
+            }),
+          })),
+        ),
+        Promise.all(
+          days.map(async (d) => ({
+            date: format(d, "yyyy-MM-dd"),
+            count: await prisma.bookingSession.count({
+              where: { createdAt: { gte: startOfDay(d), lte: endOfDay(d) } },
+            }),
+          })),
+        ),
+      ]);
+    } catch {
+      pageViewsByDay = days.map((d) => ({ date: format(d, "yyyy-MM-dd"), count: 0 }));
+      sessionsCreatedByDay = days.map((d) => ({ date: format(d, "yyyy-MM-dd"), count: 0 }));
+    }
+
+    const pageViewsLast7Days = pageViewsByDay.slice(-7).reduce((s, x) => s + x.count, 0);
+    const sessionsByStatus = sessionsByStatusRows.map(
+      (r: { status: string; _count: { _all: number } }) => ({
+        status: r.status,
+        count: r._count._all,
+      }),
+    );
+
+    return c.json({
+      pendingSessions,
+      sessionsWeek,
+      beatsAvailable,
+      productionsTotal,
+      pageViewsTotal,
+      pageViewsLast7Days,
+      pageViewsByDay,
+      sessionsCreatedByDay,
+      sessionsByStatus,
+    });
   });
 
   admin.get("/sessions", async (c) => {
@@ -1001,7 +1081,17 @@ export function createApp(): Hono {
         slots,
       };
     });
-    return c.json({ sessions, blocked, days });
+    const sessionsOut = sessions.map((s) => ({
+      id: s.id,
+      scheduledDate: s.scheduledDate.toISOString(),
+      /** Misma clave que `days[].date` en el servidor (evita desfaces por TZ en el cliente). */
+      calendarDayKey: format(s.scheduledDate, "yyyy-MM-dd"),
+      timeSlot: s.timeSlot,
+      artistName: s.artistName,
+      status: s.status,
+      serviceType: s.serviceType,
+    }));
+    return c.json({ sessions: sessionsOut, blocked, days });
   });
 
   admin.get("/site-config", async (c) => {

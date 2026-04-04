@@ -11,12 +11,7 @@
     "db:seed": "prisma db seed",
     "db:generate": "prisma generate",
     "test": "vitest run",
-    "test:watch": "vitest",
-    "qa:automated": "bash scripts/qa/run-automated.sh",
-    "qa:load": "node scripts/load/smoke.mjs",
-    "qa:load:k6": "k6 run scripts/load/k6-smoke.js",
-    "qa:synthetic": "node scripts/monitor/synthetic.mjs",
-    "qa:audit": "npm audit --audit-level=high"
+    "test:watch": "vitest"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
