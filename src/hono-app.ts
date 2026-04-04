@@ -42,6 +42,16 @@ if (!JWT_SECRET) {
 
 type AdminVars = { adminId: string; adminEmail: string };
 
+/** Orígenes permitidos (sin barra final). Varios: FRONTEND_URL="https://a.app,https://b.app" */
+function parseFrontendOrigins(): string[] {
+  return (process.env.FRONTEND_URL ?? "http://localhost:3000")
+    .split(",")
+    .map((o) => o.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
+}
+
+const FRONTEND_ORIGINS = parseFrontendOrigins();
+
 const requireAdmin = createMiddleware<{ Variables: AdminVars }>(async (c, next) => {
   if (!JWT_SECRET) {
     return c.json({ error: "Servidor sin JWT_SECRET" }, 500);
@@ -70,7 +80,11 @@ export function createApp(): Hono {
   app.use(
     "/*",
     cors({
-      origin: process.env.FRONTEND_URL ?? "http://localhost:3000",
+      origin: (origin) => {
+        if (!origin) return null;
+        const normalized = origin.replace(/\/+$/, "");
+        return FRONTEND_ORIGINS.includes(normalized) ? origin : null;
+      },
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization"],
       credentials: true,
