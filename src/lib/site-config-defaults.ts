@@ -114,6 +114,12 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
         desc: "Traes tu idea, la desarrollamos juntos",
       },
       { type: "MIX_MASTER", icon: "🎚️", title: "Mezcla y masterización", desc: "Tu canción al siguiente nivel" },
+      {
+        type: "AUDIOVISUAL_PRODUCTION",
+        icon: "🎬",
+        title: "Producción audiovisual (video)",
+        desc: "Video clip, lyric video o contenido para redes: dirección, rodaje y post con sello urbano.",
+      },
       { type: "CONSULTING", icon: "💬", title: "Consultoría artística (30 min)", desc: "Hablamos de tu proyecto y tu sonido" },
     ],
     genreChips: ["Champeta", "Trap", "Reggaeton", "Afrobeat", "Dancehall", "Otro"],

@@ -11,6 +11,7 @@ export const SERVICE_TYPE_LABELS: Record<string, string> = {
   BEAT_PRODUCTION: "Beat personalizado",
   COPRODUCTION: "Coproducción",
   MIX_MASTER: "Mezcla y masterización",
+  AUDIOVISUAL_PRODUCTION: "Producción audiovisual (video)",
   CONSULTING: "Consultoría artística",
 };
 
