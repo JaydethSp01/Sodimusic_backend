@@ -9,12 +9,9 @@ import {
   addDays,
   eachDayOfInterval,
   endOfDay,
-  endOfMonth,
   format,
-  isSameDay,
   parseISO,
   startOfDay,
-  startOfMonth,
   subDays,
 } from "date-fns";
 import { randomUUID } from "crypto";
@@ -36,6 +33,11 @@ import { optionalMediaUrl } from "./schemas/media-url.js";
 import { draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db.js";
 import { ensureUploadDir, UPLOAD_DIR } from "./lib/uploads-dir.js";
 import { isSlotScope, monthDateKeyRange, parseDateKey, type BlockScope } from "./lib/blocked-dates.js";
+import {
+  DEFAULT_CALENDAR_TIMEZONE,
+  eachDateKeyInClosedRange,
+  instantToCalendarDateKey,
+} from "./lib/calendar-date-key.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -1028,21 +1030,26 @@ export function createApp(): Hono {
     if (!bounds) {
       return c.json({ error: "month inválido" }, 400);
     }
-    const base = parseISO(`${month}-01`);
-    const from = startOfMonth(base);
-    const to = endOfMonth(base);
-    const [sessions, blocked] = await Promise.all([
+    const tz = DEFAULT_CALENDAR_TIMEZONE;
+    const rangePadFrom = subDays(parseISO(`${bounds.from}T12:00:00Z`), 2);
+    const rangePadTo = addDays(parseISO(`${bounds.to}T12:00:00Z`), 2);
+    const [sessionsRaw, blocked] = await Promise.all([
       prisma.bookingSession.findMany({
-        where: { scheduledDate: { gte: from, lte: to } },
+        where: { scheduledDate: { gte: rangePadFrom, lte: rangePadTo } },
+        orderBy: { scheduledDate: "desc" },
       }),
       prisma.blockedDate.findMany({
         where: { dateKey: { gte: bounds.from, lte: bounds.to } },
         orderBy: [{ dateKey: "asc" }, { scope: "asc" }],
       }),
     ]);
+    const sessions = sessionsRaw.filter((s) => {
+      const k = instantToCalendarDateKey(s.scheduledDate, tz);
+      return k >= bounds.from && k <= bounds.to;
+    });
     type SlotState = "FREE" | "PENDING" | "CONFIRMED" | "BLOCKED";
-    const days = eachDayOfInterval({ start: from, end: to }).map((d) => {
-      const dateStr = format(d, "yyyy-MM-dd");
+    const dateKeys = eachDateKeyInClosedRange(bounds.from, bounds.to);
+    const days = dateKeys.map((dateStr) => {
       const blocksForDay = blocked.filter((b) => b.dateKey === dateStr);
       const fullDay = blocksForDay.some((b) => b.scope === "DAY");
       if (fullDay) {
@@ -1056,7 +1063,7 @@ export function createApp(): Hono {
           },
         };
       }
-      const daySessions = sessions.filter((s) => isSameDay(s.scheduledDate, d));
+      const daySessions = sessions.filter((s) => instantToCalendarDateKey(s.scheduledDate, tz) === dateStr);
       const slots: Record<"morning" | "afternoon" | "night", SlotState> = {
         morning: "FREE",
         afternoon: "FREE",
@@ -1084,14 +1091,14 @@ export function createApp(): Hono {
     const sessionsOut = sessions.map((s) => ({
       id: s.id,
       scheduledDate: s.scheduledDate.toISOString(),
-      /** Misma clave que `days[].date` en el servidor (evita desfaces por TZ en el cliente). */
-      calendarDayKey: format(s.scheduledDate, "yyyy-MM-dd"),
+      /** Día de calendario en CALENDAR_TZ (alineado con days[].date y el listado). */
+      calendarDayKey: instantToCalendarDateKey(s.scheduledDate, tz),
       timeSlot: s.timeSlot,
       artistName: s.artistName,
       status: s.status,
       serviceType: s.serviceType,
     }));
-    return c.json({ sessions: sessionsOut, blocked, days });
+    return c.json({ calendarTimeZone: tz, sessions: sessionsOut, blocked, days });
   });
 
   admin.get("/site-config", async (c) => {
