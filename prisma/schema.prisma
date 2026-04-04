@@ -94,9 +94,15 @@ model BookingSession {
 
 model BlockedDate {
   id        String   @id @default(cuid())
-  date      DateTime
+  /// Calendario yyyy-MM-dd (UTC) para evitar desfaces por zona horaria.
+  dateKey   String
+  /// "DAY" = día completo; o "morning" | "afternoon" | "night" para una franja.
+  scope     String   @default("DAY")
   reason    String?
   createdAt DateTime @default(now())
+
+  @@unique([dateKey, scope])
+  @@index([dateKey])
 }
 
 model AdminUser {

@@ -34,6 +34,7 @@ import { siteContentSchema } from "./schemas/site-config.js";
 import { optionalMediaUrl } from "./schemas/media-url.js";
 import { draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db.js";
 import { ensureUploadDir, UPLOAD_DIR } from "./lib/uploads-dir.js";
+import { isSlotScope, monthDateKeyRange, parseDateKey, type BlockScope } from "./lib/blocked-dates.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {
@@ -152,10 +153,12 @@ export function createApp(): Hono {
     }
     const dayStart = startOfDay(parsed);
     const dayEnd = endOfDay(parsed);
-    const blocked = await prisma.blockedDate.findFirst({
-      where: { date: { gte: dayStart, lte: dayEnd } },
-    });
-    if (blocked) {
+    const dateKey = parseDateKey(dateParam);
+    if (!dateKey) {
+      return c.json({ error: "Fecha inválida (usa yyyy-MM-dd)" }, 400);
+    }
+    const blocks = await prisma.blockedDate.findMany({ where: { dateKey } });
+    if (blocks.some((b) => b.scope === "DAY")) {
       return c.json({ date: dateParam, occupied: ["morning", "afternoon", "night"], blocked: true });
     }
     const sessions = await prisma.bookingSession.findMany({
@@ -165,7 +168,9 @@ export function createApp(): Hono {
       },
       select: { timeSlot: true },
     });
-    const occupied = [...new Set(sessions.map((s) => s.timeSlot))] as ("morning" | "afternoon" | "night")[];
+    const fromSessions = [...new Set(sessions.map((s) => s.timeSlot))] as string[];
+    const fromBlocks = blocks.filter((b) => isSlotScope(b.scope)).map((b) => b.scope);
+    const occupied = [...new Set([...fromSessions, ...fromBlocks])] as ("morning" | "afternoon" | "night")[];
     return c.json({ date: dateParam, occupied, blocked: false });
   });
 
@@ -183,12 +188,13 @@ export function createApp(): Hono {
     const data = parsed.data;
     const dayStart = startOfDay(data.scheduledDate);
     const dayEnd = endOfDay(data.scheduledDate);
-
-    const blocked = await prisma.blockedDate.findFirst({
-      where: { date: { gte: dayStart, lte: dayEnd } },
-    });
-    if (blocked) {
+    const dateKey = format(dayStart, "yyyy-MM-dd");
+    const blocks = await prisma.blockedDate.findMany({ where: { dateKey } });
+    if (blocks.some((b) => b.scope === "DAY")) {
       return c.json({ ok: false, error: "Esa fecha no está disponible." }, 400);
+    }
+    if (blocks.some((b) => b.scope === data.timeSlot)) {
+      return c.json({ ok: false, error: "Esa franja no está disponible." }, 400);
     }
 
     const conflict = await prisma.bookingSession.findFirst({
@@ -411,12 +417,16 @@ export function createApp(): Hono {
     const from = c.req.query("from");
     const to = c.req.query("to");
     if (!from || !to) {
-      return c.json({ error: "from y to requeridos (ISO)" }, 400);
+      return c.json({ error: "from y to requeridos (yyyy-MM-dd)" }, 400);
     }
-    const f = parseISO(from);
-    const t = parseISO(to);
+    const fromKey = parseDateKey(from) ?? format(startOfDay(parseISO(from)), "yyyy-MM-dd");
+    const toKey = parseDateKey(to) ?? format(endOfDay(parseISO(to)), "yyyy-MM-dd");
+    if (!fromKey || !toKey) {
+      return c.json({ error: "Rango de fechas inválido" }, 400);
+    }
     const rows = await prisma.blockedDate.findMany({
-      where: { date: { gte: startOfDay(f), lte: endOfDay(t) } },
+      where: { dateKey: { gte: fromKey, lte: toKey } },
+      orderBy: [{ dateKey: "asc" }, { scope: "asc" }],
     });
     return c.json({ items: rows });
   });
@@ -549,12 +559,13 @@ export function createApp(): Hono {
     const d = parsed.data;
     const dayStart = startOfDay(parseISO(d.scheduledDate));
     const dayEnd = endOfDay(parseISO(d.scheduledDate));
-
-    const blocked = await prisma.blockedDate.findFirst({
-      where: { date: { gte: dayStart, lte: dayEnd } },
-    });
-    if (blocked) {
+    const dateKey = format(dayStart, "yyyy-MM-dd");
+    const blocks = await prisma.blockedDate.findMany({ where: { dateKey } });
+    if (blocks.some((b) => b.scope === "DAY")) {
       return c.json({ error: "Ese día está bloqueado en el calendario." }, 400);
+    }
+    if (blocks.some((b) => b.scope === d.timeSlot)) {
+      return c.json({ error: "Esa franja está bloqueada en el calendario." }, 400);
     }
 
     const conflict = await prisma.bookingSession.findFirst({
@@ -860,13 +871,64 @@ export function createApp(): Hono {
     } catch {
       return c.json({ error: "JSON inválido" }, 400);
     }
-    const parsed = z.object({ date: z.string(), reason: z.string().optional() }).safeParse(body);
+    const parsed = z
+      .object({
+        date: z.string(),
+        reason: z.string().optional(),
+        scope: z.enum(["DAY", "morning", "afternoon", "night"]).optional(),
+      })
+      .safeParse(body);
     if (!parsed.success) {
       return c.json({ error: "Fecha requerida" }, 400);
     }
-    const d = startOfDay(parseISO(parsed.data.date));
-    const row = await prisma.blockedDate.create({
-      data: { date: d, reason: parsed.data.reason },
+    const dateKey = parseDateKey(parsed.data.date);
+    if (!dateKey) {
+      return c.json({ error: "Fecha inválida (yyyy-MM-dd)" }, 400);
+    }
+    const scope: BlockScope = parsed.data.scope ?? "DAY";
+    const reason = parsed.data.reason?.trim() || null;
+
+    if (scope === "DAY") {
+      await prisma.blockedDate.deleteMany({ where: { dateKey } });
+      const row = await prisma.blockedDate.create({
+        data: { dateKey, scope: "DAY", reason },
+      });
+      return c.json(row);
+    }
+
+    const dayRow = await prisma.blockedDate.findFirst({
+      where: { dateKey, scope: "DAY" },
+    });
+    if (dayRow) {
+      return c.json(
+        {
+          error:
+            "Este día está bloqueado por completo. Desbloquéalo primero si quieres gestionar franjas sueltas.",
+        },
+        400,
+      );
+    }
+
+    const dayStart = startOfDay(parseISO(dateKey));
+    const dayEnd = endOfDay(parseISO(dateKey));
+    const conflict = await prisma.bookingSession.findFirst({
+      where: {
+        scheduledDate: { gte: dayStart, lte: dayEnd },
+        timeSlot: scope,
+        status: { in: ["PENDING", "CONFIRMED"] },
+      },
+    });
+    if (conflict) {
+      return c.json(
+        { error: "Hay una sesión pendiente o confirmada en esa franja. Gestiónala antes de bloquear." },
+        400,
+      );
+    }
+
+    const row = await prisma.blockedDate.upsert({
+      where: { dateKey_scope: { dateKey, scope } },
+      create: { dateKey, scope, reason },
+      update: { reason },
     });
     return c.json(row);
   });
@@ -882,6 +944,10 @@ export function createApp(): Hono {
     if (!month) {
       return c.json({ error: "month requerido (YYYY-MM)" }, 400);
     }
+    const bounds = monthDateKeyRange(month);
+    if (!bounds) {
+      return c.json({ error: "month inválido" }, 400);
+    }
     const base = parseISO(`${month}-01`);
     const from = startOfMonth(base);
     const to = endOfMonth(base);
@@ -890,15 +956,18 @@ export function createApp(): Hono {
         where: { scheduledDate: { gte: from, lte: to } },
       }),
       prisma.blockedDate.findMany({
-        where: { date: { gte: from, lte: to } },
+        where: { dateKey: { gte: bounds.from, lte: bounds.to } },
+        orderBy: [{ dateKey: "asc" }, { scope: "asc" }],
       }),
     ]);
     type SlotState = "FREE" | "PENDING" | "CONFIRMED" | "BLOCKED";
     const days = eachDayOfInterval({ start: from, end: to }).map((d) => {
-      const blockedDay = blocked.find((b) => isSameDay(b.date, d));
-      if (blockedDay) {
+      const dateStr = format(d, "yyyy-MM-dd");
+      const blocksForDay = blocked.filter((b) => b.dateKey === dateStr);
+      const fullDay = blocksForDay.some((b) => b.scope === "DAY");
+      if (fullDay) {
         return {
-          date: format(d, "yyyy-MM-dd"),
+          date: dateStr,
           blocked: true,
           slots: {
             morning: "BLOCKED" as const,
@@ -921,8 +990,13 @@ export function createApp(): Hono {
           }
         }
       }
+      for (const b of blocksForDay) {
+        if (isSlotScope(b.scope) && slots[b.scope] === "FREE") {
+          slots[b.scope] = "BLOCKED";
+        }
+      }
       return {
-        date: format(d, "yyyy-MM-dd"),
+        date: dateStr,
         blocked: false,
         slots,
       };
