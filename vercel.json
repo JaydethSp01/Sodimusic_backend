@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "hono",
-  "installCommand": "npm ci --include=dev",
+  "installCommand": "npm install --include=dev",
   "buildCommand": "npm run db:generate && npm run build"
 }
