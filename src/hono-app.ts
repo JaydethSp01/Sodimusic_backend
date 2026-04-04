@@ -20,20 +20,20 @@ import { randomUUID } from "crypto";
 import { extname, join } from "path";
 import { readFile, writeFile } from "fs/promises";
 import { es } from "date-fns/locale";
-import { prisma } from "./lib/prisma";
-import { TIME_SLOT_LABELS } from "./lib/constants";
+import { prisma } from "./lib/prisma.js";
+import { TIME_SLOT_LABELS } from "./lib/constants.js";
 import {
   sendBeatInterestEmails,
   sendSessionAlertToAdmin,
   sendSessionConfirmedToArtist,
   sendSessionPendingToArtist,
-} from "./lib/email";
-import { bookingFullSchema } from "./schemas/booking";
-import { beatInterestSchema } from "./schemas/beat-interest";
-import { siteContentSchema } from "./schemas/site-config";
-import { optionalMediaUrl } from "./schemas/media-url";
-import { draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db";
-import { ensureUploadDir, UPLOAD_DIR } from "./lib/uploads-dir";
+} from "./lib/email.js";
+import { bookingFullSchema } from "./schemas/booking.js";
+import { beatInterestSchema } from "./schemas/beat-interest.js";
+import { siteContentSchema } from "./schemas/site-config.js";
+import { optionalMediaUrl } from "./schemas/media-url.js";
+import { draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db.js";
+import { ensureUploadDir, UPLOAD_DIR } from "./lib/uploads-dir.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) {

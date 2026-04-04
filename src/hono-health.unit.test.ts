@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createApp } from "./hono-app";
+import { createApp } from "./hono-app.js";
 
 describe("Hono — health", () => {
   it("GET /health responde ok sin tocar BD", async () => {

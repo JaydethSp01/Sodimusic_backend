@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { createApp } from "./hono-app";
-import { prisma } from "./lib/prisma";
-import { getAdminCredentials } from "./test-admin-creds";
+import { createApp } from "./hono-app.js";
+import { prisma } from "./lib/prisma.js";
+import { getAdminCredentials } from "./test-admin-creds.js";
 
 const app = createApp();
 

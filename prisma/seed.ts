@@ -1,7 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import { addDays, setHours, startOfTomorrow } from "date-fns";
-import { SITE_CONTENT_DEFAULTS } from "../src/lib/site-config-defaults";
+import { SITE_CONTENT_DEFAULTS } from "../src/lib/site-config-defaults.js";
 
 const prisma = new PrismaClient();
 

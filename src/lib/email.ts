@@ -1,6 +1,6 @@
 import { Resend } from "resend";
-import { ADMIN_EMAIL, SERVICE_TYPE_LABELS, SITE_NAME, SITE_URL, WHATSAPP_URL } from "./constants";
-import type { Result } from "../types/result";
+import { ADMIN_EMAIL, SERVICE_TYPE_LABELS, SITE_NAME, SITE_URL, WHATSAPP_URL } from "./constants.js";
+import type { Result } from "../types/result.js";
 
 const brandFooter = `
   <p style="margin:24px 0 0;font-size:12px;color:#5A5550;">

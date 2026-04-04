@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mergeSiteContent } from "./site-config";
-import { SITE_CONTENT_DEFAULTS } from "../lib/site-config-defaults";
+import { mergeSiteContent } from "./site-config.js";
+import { SITE_CONTENT_DEFAULTS } from "../lib/site-config-defaults.js";
 
 describe("mergeSiteContent", () => {
   it("devuelve base si patch vacío", () => {

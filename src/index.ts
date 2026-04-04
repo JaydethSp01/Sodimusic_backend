@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
-import { createApp } from "./hono-app";
+import { createApp } from "./hono-app.js";
 
 const app = createApp();
 export default app;

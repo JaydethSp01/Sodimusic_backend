@@ -1,4 +1,4 @@
-import type { SiteContent } from "../schemas/site-config";
+import type { SiteContent } from "../schemas/site-config.js";
 
 export const SITE_CONTENT_DEFAULTS: SiteContent = {
   brand: {

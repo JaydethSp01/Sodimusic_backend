@@ -1,6 +1,6 @@
-import { prisma } from "./prisma";
-import { SITE_CONTENT_DEFAULTS } from "./site-config-defaults";
-import { mergeSiteContent, type SiteContent } from "../schemas/site-config";
+import { prisma } from "./prisma.js";
+import { SITE_CONTENT_DEFAULTS } from "./site-config-defaults.js";
+import { mergeSiteContent, type SiteContent } from "../schemas/site-config.js";
 
 export async function ensureSiteConfigRow(): Promise<void> {
   const exists = await prisma.siteConfig.findUnique({ where: { id: "default" } });
