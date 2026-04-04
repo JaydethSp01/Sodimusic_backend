@@ -42,6 +42,8 @@ export const siteContentSchema = z.object({
     aboutEyebrow: z.string().min(1),
     aboutTitle: z.string().min(1),
     aboutBody: z.string().min(1),
+    /** Imagen del panel lateral «Quiénes somos» (URL o ruta /uploads/...) */
+    aboutImageUrl: urlOrPath,
     aboutAsideCaption: z.string().min(1),
     genresEyebrow: z.string().min(1),
     genresTitle: z.string().min(1),
