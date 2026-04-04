@@ -10,7 +10,7 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
       "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?q=80&w=2400&auto=format&fit=crop",
     eyebrow: "EST. 2016 · MARÍA LA BAJA, BOLÍVAR",
     title: "SODIMUSIC",
-    tagline: "Desde María La Baja para el mundo",
+    tagline: "María La Baja, cerca de Cartagena: la champeta abrió el camino",
     primaryCta: "Agenda tu sesión",
     secondaryCta: "Ver producciones",
     primaryHref: "/booking",
@@ -18,15 +18,15 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
   },
   home: {
     aboutEyebrow: "Quiénes somos",
-    aboutTitle: "Raíz afro-caribeña, sonido global",
+    aboutTitle: "Raíz en champeta, sonido sin fronteras",
     aboutBody:
-      "Sodimusic Company nació en María La Baja, Bolívar: territorio afrodescendiente, cuna del bullerengue y vecino de San Basilio de Palenque. Más de una década construyendo en silencio con el crew XMEN: trap, reggaeton, afrobeat y dancehall con identidad propia. No es reggaetón genérico: es el Caribe profundo hablando urbano.",
+      "Sodimusic Company nace en María La Baja, Bolívar, a pocos kilómetros de Cartagena: tierra donde la champeta marcó el barrio, los ritmos africanos resuenan en cada esquina y estamos cerca de la cuna del género. Ahí empezó todo. Con el tiempo, el crew XMEN llevó esa identidad al trap, el reggaeton, el afrobeat y el dancehall — sin perder el sabor del Caribe profundo. No es urbano genérico: es memoria costeña en formato global.",
     aboutImageUrl: "/maria_la_bajafoto.jpg",
     aboutAsideCaption: "Montes de María · Costa Caribe · 2026",
     genresEyebrow: "Catálogo",
     genresTitle: "Géneros",
     storyEyebrow: "Historia",
-    storyTitle: "Del barrio al catálogo oficial",
+    storyTitle: "De la champeta al catálogo oficial",
     portfolioEyebrow: "Portafolio",
     portfolioTitle: "Últimas producciones",
     portfolioCta: "Ver todas las producciones →",
@@ -39,17 +39,17 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
       {
         year: "2016",
         title: "Nace la visión",
-        desc: "El primer artista con sonido e identidad marcada.",
+        desc: "En María La Baja, entre picós, champeta y ritmos africanos: los primeros pasos del sonido Sodimusic.",
       },
       {
         year: "2018",
         title: "Consolidación del crew",
-        desc: "XMEN toma forma como núcleo del sello.",
+        desc: "XMEN toma forma como núcleo del sello, con la champeta como referencia y el urbano como proyección.",
       },
       {
         year: "2022",
         title: "Expansión regional",
-        desc: "Producciones con artistas de Medellín y conexiones con México.",
+        desc: "Producciones con artistas de Medellín y conexiones con México, siempre con el Caribe en la mezcla.",
       },
       {
         year: "2026",
@@ -59,14 +59,14 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
     ],
   },
   footer: {
-    tagline: "Trap con alma de Caribe africano. Desde María La Baja para el mundo.",
+    tagline: "Champeta en el ADN, Caribe en cada beat. Desde María La Baja para el mundo.",
     copyright: "© 2016–2026 Sodimusic Company. Todos los derechos reservados.",
     subline: "Hecho en Medellín, con raíces en María La Baja",
   },
   seo: {
     homeTitle: "Sodimusic Company — Sello Urbano Afro-Caribeño | Colombia",
     homeDescription:
-      "Sello discográfico independiente desde 2016 en María La Baja, Bolívar. Trap, afrobeat, reggaeton y dancehall con raíces afrocolombianas.",
+      "Sello desde 2016 en María La Baja, Bolívar, cerca de Cartagena: raíz en champeta y ritmos africanos; hoy trap, reggaeton, afrobeat y dancehall con identidad costeña.",
   },
   social: {
     youtube: "https://www.youtube.com/channel/UCbCYvwiAsoIdumPbFBe1x6A",
@@ -116,36 +116,37 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
       { type: "MIX_MASTER", icon: "🎚️", title: "Mezcla y masterización", desc: "Tu canción al siguiente nivel" },
       { type: "CONSULTING", icon: "💬", title: "Consultoría artística (30 min)", desc: "Hablamos de tu proyecto y tu sonido" },
     ],
-    genreChips: ["Trap", "Reggaeton", "Afrobeat", "Dancehall", "Otro"],
+    genreChips: ["Champeta", "Trap", "Reggaeton", "Afrobeat", "Dancehall", "Otro"],
   },
   artists: {
     pageHeroTitle: "ARTISTAS",
-    pageHeroDescription: "Crew XMEN. Raíz en María La Baja, presencia en Cartagena, Medellín y más allá.",
+    pageHeroDescription:
+      "Crew XMEN. María La Baja, Bolívar — cerca de Cartagena y de la cuna de la champeta — con presencia en Medellín y más allá.",
     producerLabel: "Productor principal",
     producerName: "JeiVy LaZy",
-    producerGenres: ["Trap", "Afrobeat", "Reggaeton", "Dancehall"],
+    producerGenres: ["Champeta", "Trap", "Reggaeton", "Afrobeat", "Dancehall"],
     producerBio:
-      "Productor y artista principal del sello. La visión sonora de Sodimusic nace de la costa y se proyecta al trap y el reggaeton con identidad palenquera y caribeña. Más de una década construyendo con el crew XMEN: desde María La Baja para el mundo.",
+      "Productor y artista principal del sello. Todo arranca en María La Baja, junto a Cartagena, donde la champeta y los ritmos africanos marcaron el barrio: de ahí sale la visión que hoy cruza trap, reggaeton, afrobeat y dancehall con identidad palenquera y caribeña. Más de una década con el crew XMEN.",
     primaryCtaLabel: "Agendar sesión con JeiVy",
     crewSectionTitle: "CREW XMEN",
     crewSectionDescription:
-      "Crew de confianza en sesiones, directos y desarrollo de talento desde el Montes de María al estudio.",
+      "Crew de confianza en sesiones, directos y desarrollo de talento: del picó y la champeta al estudio y la tarima.",
     youtubeCtaLabel: "Canal de YouTube Sodimusic",
     members: [
       {
         name: "J Col",
-        genre: "Trap · Reggaeton",
-        bio: "Artista del movimiento urbano local con enfoque melódico y narrativa de calle, manteniendo identidad caribeña.",
+        genre: "Champeta · Trap · Reggaeton",
+        bio: "Movimiento urbano local con melódica y narrativa de calle, con la champeta y el Caribe en la referencia.",
       },
       {
         name: "El Fammy",
         genre: "Reggaeton · Dancehall",
-        bio: "Energía de tarima y enfoque en reggaeton y dancehall para perreo fino y directo.",
+        bio: "Energía de tarima: reggaeton y dancehall con el sabor que se cría cerca de Cartagena y la costa.",
       },
       {
         name: "El Vega",
         genre: "Trap · Afrobeat",
-        bio: "Sonido oscuro y moderno entre trap y afrobeat, con identidad marcada de María La Baja.",
+        bio: "Sonido oscuro entre trap y afrobeat, con la raíz de María La Baja y el eco de la champeta en la mezcla.",
       },
     ],
   },
@@ -163,13 +164,13 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
       "Más de 50 producciones con artistas de Colombia, México y el Caribe. El portafolio completo de Sodimusic Company.",
     heroTitle: "PRODUCIDO POR SODIMUSIC",
     heroDescriptionTemplate:
-      "Desde María La Baja hasta Ciudad de México, Sodimusic ha construido en silencio un catálogo de {{total}} producciones con artistas del Caribe y América Latina. Aquí está ese trabajo.",
+      "Desde María La Baja —donde la champeta y los ritmos africanos marcaron el inicio— hasta Ciudad de México: {{total}} producciones con artistas del Caribe y América Latina. Aquí está ese trabajo.",
     catalogCountLineTemplate: "{{total}} producciones en el catálogo",
   },
   releasesPage: {
     metaTitle: "Próximos lanzamientos",
     metaDescription:
-      "Adelantos y fechas de lo que se viene en Sodimusic: nuevos singles, proyectos y snippets desde María La Baja.",
+      "Adelantos y fechas en Sodimusic: nuevos singles y proyectos con raíz en María La Baja, Bolívar, cerca de Cartagena y la tradición champetera.",
     heroEyebrow: "Lo que viene",
     heroTitle: "PRÓXIMOS LANZAMIENTOS",
     heroDescription:
