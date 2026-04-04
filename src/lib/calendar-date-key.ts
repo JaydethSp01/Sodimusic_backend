@@ -18,6 +18,24 @@ export function instantToCalendarDateKey(date: Date, timeZone: string = DEFAULT_
   return `${y}-${m}-${d}`;
 }
 
+/** Últimos `n` días en calendario UTC (alineado con `timestamptz` en Postgres / Vercel). */
+export function lastNDaysUtcDateKeys(n: number): string[] {
+  const now = new Date();
+  const keys: string[] = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - i, 12, 0, 0));
+    keys.push(d.toISOString().slice(0, 10));
+  }
+  return keys;
+}
+
+export function utcDateKeyBounds(dateKey: string): { gte: Date; lte: Date } {
+  return {
+    gte: new Date(`${dateKey}T00:00:00.000Z`),
+    lte: new Date(`${dateKey}T23:59:59.999Z`),
+  };
+}
+
 /** Itera claves yyyy-MM-dd desde `from` hasta `to` (inclusive), orden lexicográfico = cronológico. */
 export function eachDateKeyInClosedRange(fromKey: string, toKey: string): string[] {
   const keys: string[] = [];

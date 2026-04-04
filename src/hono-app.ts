@@ -5,15 +5,7 @@ import type { Prisma } from "@prisma/client";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import {
-  addDays,
-  eachDayOfInterval,
-  endOfDay,
-  format,
-  parseISO,
-  startOfDay,
-  subDays,
-} from "date-fns";
+import { addDays, endOfDay, format, parseISO, startOfDay, subDays } from "date-fns";
 import { randomUUID } from "crypto";
 import { extname, join } from "path";
 import { readFile, writeFile } from "fs/promises";
@@ -37,6 +29,8 @@ import {
   DEFAULT_CALENDAR_TIMEZONE,
   eachDateKeyInClosedRange,
   instantToCalendarDateKey,
+  lastNDaysUtcDateKeys,
+  utcDateKeyBounds,
 } from "./lib/calendar-date-key.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
@@ -522,9 +516,7 @@ export function createApp(): Hono {
   admin.get("/dashboard/stats", async (c) => {
     const now = new Date();
     const weekEnd = addDays(now, 7);
-    const rangeStart = startOfDay(subDays(now, 13));
-    const rangeEnd = startOfDay(now);
-    const days = eachDayOfInterval({ start: rangeStart, end: rangeEnd });
+    const dayKeys14 = lastNDaysUtcDateKeys(14);
 
     const [pendingSessions, sessionsWeek, beatsAvailable, productionsTotal, pageViewsTotal, sessionsByStatusRows] =
       await Promise.all([
@@ -542,25 +534,31 @@ export function createApp(): Hono {
     try {
       [pageViewsByDay, sessionsCreatedByDay] = await Promise.all([
         Promise.all(
-          days.map(async (d) => ({
-            date: format(d, "yyyy-MM-dd"),
-            count: await prisma.pageView.count({
-              where: { createdAt: { gte: startOfDay(d), lte: endOfDay(d) } },
-            }),
-          })),
+          dayKeys14.map(async (dateKey) => {
+            const { gte, lte } = utcDateKeyBounds(dateKey);
+            return {
+              date: dateKey,
+              count: await prisma.pageView.count({
+                where: { createdAt: { gte, lte } },
+              }),
+            };
+          }),
         ),
         Promise.all(
-          days.map(async (d) => ({
-            date: format(d, "yyyy-MM-dd"),
-            count: await prisma.bookingSession.count({
-              where: { createdAt: { gte: startOfDay(d), lte: endOfDay(d) } },
-            }),
-          })),
+          dayKeys14.map(async (dateKey) => {
+            const { gte, lte } = utcDateKeyBounds(dateKey);
+            return {
+              date: dateKey,
+              count: await prisma.bookingSession.count({
+                where: { createdAt: { gte, lte } },
+              }),
+            };
+          }),
         ),
       ]);
     } catch {
-      pageViewsByDay = days.map((d) => ({ date: format(d, "yyyy-MM-dd"), count: 0 }));
-      sessionsCreatedByDay = days.map((d) => ({ date: format(d, "yyyy-MM-dd"), count: 0 }));
+      pageViewsByDay = dayKeys14.map((dateKey) => ({ date: dateKey, count: 0 }));
+      sessionsCreatedByDay = dayKeys14.map((dateKey) => ({ date: dateKey, count: 0 }));
     }
 
     const pageViewsLast7Days = pageViewsByDay.slice(-7).reduce((s, x) => s + x.count, 0);
