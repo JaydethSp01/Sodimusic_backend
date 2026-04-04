@@ -1,0 +1,117 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Production {
+  id            String   @id @default(cuid())
+  title         String
+  artistName    String
+  artistCity    String
+  artistCountry String   @default("Colombia")
+  year          Int
+  genre         String
+  coverUrl      String?
+  spotifyUrl    String?
+  youtubeUrl    String?
+  featured      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([genre])
+  @@index([year])
+}
+
+model Release {
+  id          String   @id @default(cuid())
+  title       String
+  slug        String   @unique
+  artistName  String
+  genre       String
+  releaseYear Int
+  coverUrl    String?
+  spotifyUrl  String?
+  youtubeUrl  String?
+  description String?
+  featured    Boolean  @default(false)
+  /// Si es true, aparece en /releases (página de próximos lanzamientos y adelantos). Los ya publicados van con false.
+  upcoming    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([genre])
+  @@index([releaseYear])
+  @@index([upcoming])
+}
+
+model Beat {
+  id        String @id @default(cuid())
+  title     String
+  genre     String
+  bpm       Int?
+  mood      String?
+  priceCOP  Int
+  status    String @default("AVAILABLE")
+  audioUrl  String?
+  coverUrl  String?
+  exclusive Boolean    @default(false)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  @@index([genre])
+  @@index([status])
+}
+
+model BookingSession {
+  id              String   @id @default(cuid())
+  serviceType     String
+  artistName      String
+  artistEmail     String
+  artistPhone     String
+  artistInstagram String?
+  musicReference  String
+  vision          String?
+  genres          String
+  isFirstTime     Boolean  @default(true)
+  scheduledDate   DateTime
+  timeSlot        String
+  status          String   @default("PENDING")
+  internalNotes   String?
+  confirmedAt     DateTime?
+  completedAt     DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([status])
+  @@index([scheduledDate])
+  @@index([artistEmail])
+}
+
+model BlockedDate {
+  id        String   @id @default(cuid())
+  date      DateTime
+  reason    String?
+  createdAt DateTime @default(now())
+}
+
+model AdminUser {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+}
+
+/// Configuración única del sitio (textos, imágenes, enlaces). Borrador vs publicado.
+model SiteConfig {
+  id              String   @id @default("default")
+  publishedJson   Json
+  draftJson       Json
+  publishedAt     DateTime?
+  draftUpdatedAt  DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}

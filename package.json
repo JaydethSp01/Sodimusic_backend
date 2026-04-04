@@ -1,0 +1,44 @@
+{
+  "name": "@sodimusic/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "db:migrate": "prisma migrate dev",
+    "db:seed": "prisma db seed",
+    "db:generate": "prisma generate",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "qa:automated": "bash scripts/qa/run-automated.sh",
+    "qa:load": "node scripts/load/smoke.mjs",
+    "qa:load:k6": "k6 run scripts/load/k6-smoke.js",
+    "qa:synthetic": "node scripts/monitor/synthetic.mjs",
+    "qa:audit": "npm audit --audit-level=high"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.13.7",
+    "@prisma/client": "^5.22.0",
+    "bcryptjs": "^3.0.3",
+    "date-fns": "^4.1.0",
+    "hono": "^4.6.12",
+    "jsonwebtoken": "^9.0.2",
+    "resend": "^6.9.4",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.7",
+    "@types/node": "^20",
+    "dotenv": "^16.4.7",
+    "prisma": "^5.22.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5",
+    "vitest": "^2.1.9"
+  }
+}

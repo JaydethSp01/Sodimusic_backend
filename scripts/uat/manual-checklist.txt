@@ -1,0 +1,10 @@
+UAT humano (no automatizable): completar con fecha y responsable.
+
+[ ] Home: textos, hero, enlaces y footer coinciden con negocio
+[ ] Booking: enviar solicitud de prueba y ver correo/admin
+[ ] Beats: comprar/interés y correo si aplica
+[ ] Producciones y releases: datos reales y enlaces YouTube/Spotify
+[ ] Móvil: navegación y formularios usables
+[ ] Legal / cookies si aplica en tu jurisdicción
+
+Automatizado (npm run qa:automated): regresión API, humo UI, sintético, auditoría npm.
