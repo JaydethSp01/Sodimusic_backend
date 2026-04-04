@@ -42,10 +42,7 @@ if (!JWT_SECRET) {
 
 type AdminVars = { adminId: string; adminEmail: string };
 
-/**
- * Orígenes CORS en runtime (sin barra final). Usa `process.env["…"]` para que el bundler de Vercel
- * no sustituya FRONTEND_URL vacío en build. Varios: "https://a.app,https://b.app"
- */
+/** Orígenes permitidos; lectura en runtime con `process.env["…"]` (Vercel no inyecta FRONTEND_URL en build). */
 function corsAllowedOrigins(): string[] {
   const raw = [process.env["FRONTEND_URL"], process.env["SITE_URL"]]
     .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
