@@ -502,7 +502,7 @@ export function createApp(): Hono {
       where.status = status;
     }
     if (serviceType && serviceType !== "Todos") {
-      where.serviceType = serviceType;
+      where.serviceType = { contains: serviceType };
     }
     if (from || to) {
       where.scheduledDate = {};
@@ -518,6 +518,75 @@ export function createApp(): Hono {
       orderBy: { scheduledDate: "desc" },
     });
     return c.json({ items: sessions });
+  });
+
+  admin.post("/sessions", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = z
+      .object({
+        serviceType: z.string().min(1),
+        artistName: z.string().min(1),
+        artistEmail: z.string().email(),
+        artistPhone: z.string().min(6),
+        artistInstagram: z.string().optional().nullable(),
+        musicReference: z.string().url(),
+        vision: z.string().optional().nullable(),
+        genres: z.string().min(1),
+        scheduledDate: z.string(),
+        timeSlot: z.enum(["morning", "afternoon", "night"]),
+        internalNotes: z.string().optional().nullable(),
+        isFirstTime: z.boolean().optional(),
+      })
+      .safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const d = parsed.data;
+    const dayStart = startOfDay(parseISO(d.scheduledDate));
+    const dayEnd = endOfDay(parseISO(d.scheduledDate));
+
+    const blocked = await prisma.blockedDate.findFirst({
+      where: { date: { gte: dayStart, lte: dayEnd } },
+    });
+    if (blocked) {
+      return c.json({ error: "Ese día está bloqueado en el calendario." }, 400);
+    }
+
+    const conflict = await prisma.bookingSession.findFirst({
+      where: {
+        scheduledDate: { gte: dayStart, lte: dayEnd },
+        timeSlot: d.timeSlot,
+        status: { in: ["PENDING", "CONFIRMED"] },
+      },
+    });
+    if (conflict) {
+      return c.json({ error: "Ya hay una sesión pendiente o confirmada en esa franja." }, 400);
+    }
+
+    const ig = d.artistInstagram?.replace(/^@/, "").trim();
+    const session = await prisma.bookingSession.create({
+      data: {
+        serviceType: d.serviceType,
+        artistName: d.artistName,
+        artistEmail: d.artistEmail.trim().toLowerCase(),
+        artistPhone: d.artistPhone.replace(/\s/g, ""),
+        artistInstagram: ig && ig.length > 0 ? ig : null,
+        musicReference: d.musicReference,
+        vision: d.vision ?? null,
+        genres: d.genres,
+        isFirstTime: d.isFirstTime ?? true,
+        scheduledDate: dayStart,
+        timeSlot: d.timeSlot,
+        status: "PENDING",
+        internalNotes: d.internalNotes ?? null,
+      },
+    });
+    return c.json(session);
   });
 
   admin.patch("/sessions/:id", async (c) => {
@@ -566,6 +635,16 @@ export function createApp(): Hono {
 
     const updated = await prisma.bookingSession.update({ where: { id }, data: updates });
     return c.json(updated);
+  });
+
+  admin.delete("/sessions/:id", async (c) => {
+    const id = c.req.param("id");
+    try {
+      await prisma.bookingSession.delete({ where: { id } });
+    } catch {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    return c.json({ ok: true });
   });
 
   admin.post("/productions", async (c) => {
