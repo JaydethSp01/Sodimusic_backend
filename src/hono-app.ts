@@ -42,15 +42,20 @@ if (!JWT_SECRET) {
 
 type AdminVars = { adminId: string; adminEmail: string };
 
-/** Orígenes permitidos (sin barra final). Varios: FRONTEND_URL="https://a.app,https://b.app" */
-function parseFrontendOrigins(): string[] {
-  return (process.env.FRONTEND_URL ?? "http://localhost:3000")
+/**
+ * Orígenes CORS en runtime (sin barra final). Usa `process.env["…"]` para que el bundler de Vercel
+ * no sustituya FRONTEND_URL vacío en build. Varios: "https://a.app,https://b.app"
+ */
+function corsAllowedOrigins(): string[] {
+  const raw = [process.env["FRONTEND_URL"], process.env["SITE_URL"]]
+    .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
+    .join(",");
+  const base = raw.length > 0 ? raw : "http://localhost:3000";
+  return base
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(Boolean);
 }
-
-const FRONTEND_ORIGINS = parseFrontendOrigins();
 
 const requireAdmin = createMiddleware<{ Variables: AdminVars }>(async (c, next) => {
   if (!JWT_SECRET) {
@@ -83,7 +88,7 @@ export function createApp(): Hono {
       origin: (origin) => {
         if (!origin) return null;
         const normalized = origin.replace(/\/+$/, "");
-        return FRONTEND_ORIGINS.includes(normalized) ? origin : null;
+        return corsAllowedOrigins().includes(normalized) ? origin : null;
       },
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization"],
