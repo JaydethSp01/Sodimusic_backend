@@ -21,8 +21,7 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
     aboutTitle: "Raíz afro-caribeña, sonido global",
     aboutBody:
       "Sodimusic Company nació en María La Baja, Bolívar: territorio afrodescendiente, cuna del bullerengue y vecino de San Basilio de Palenque. Más de una década construyendo en silencio con el crew XMEN: trap, reggaeton, afrobeat y dancehall con identidad propia. No es reggaetón genérico: es el Caribe profundo hablando urbano.",
-    aboutImageUrl:
-      "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?q=80&w=1600&auto=format&fit=crop",
+    aboutImageUrl: "/maria_la_bajafoto.jpg",
     aboutAsideCaption: "Montes de María · Costa Caribe · 2026",
     genresEyebrow: "Catálogo",
     genresTitle: "Géneros",
