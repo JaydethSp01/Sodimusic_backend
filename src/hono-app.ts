@@ -42,7 +42,7 @@ if (!JWT_SECRET) {
 
 type AdminVars = { adminId: string; adminEmail: string };
 
-/** Orígenes permitidos; lectura en runtime con `process.env["…"]` (Vercel no inyecta FRONTEND_URL en build). */
+/** Orígenes explícitos (env + localhost). Sin barra final. */
 function corsAllowedOrigins(): string[] {
   const raw = [process.env["FRONTEND_URL"], process.env["SITE_URL"]]
     .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
@@ -52,6 +52,22 @@ function corsAllowedOrigins(): string[] {
     .split(",")
     .map((o) => o.trim().replace(/\/+$/, ""))
     .filter(Boolean);
+}
+
+/**
+ * En Vercel, `FRONTEND_URL` a veces no llega al runtime del preset Hono; el navegador sí manda `Origin`.
+ * Permitimos el front de producción y previews del mismo proyecto (`sodimusic-frontend*.vercel.app`).
+ */
+function isTrustedSodimusicFrontendOrigin(origin: string): boolean {
+  const onVercel = process.env["VERCEL"] === "1" || Boolean(process.env["VERCEL_ENV"]);
+  if (!onVercel) return false;
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol !== "https:" || !hostname.endsWith(".vercel.app")) return false;
+    return hostname === "sodimusic-frontend.vercel.app" || hostname.startsWith("sodimusic-frontend-");
+  } catch {
+    return false;
+  }
 }
 
 const requireAdmin = createMiddleware<{ Variables: AdminVars }>(async (c, next) => {
@@ -85,7 +101,9 @@ export function createApp(): Hono {
       origin: (origin) => {
         if (!origin) return null;
         const normalized = origin.replace(/\/+$/, "");
-        return corsAllowedOrigins().includes(normalized) ? origin : null;
+        if (corsAllowedOrigins().includes(normalized)) return origin;
+        if (isTrustedSodimusicFrontendOrigin(origin)) return origin;
+        return null;
       },
       allowMethods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
       allowHeaders: ["Content-Type", "Authorization"],
