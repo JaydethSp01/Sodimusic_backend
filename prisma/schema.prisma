@@ -130,3 +130,41 @@ model PageView {
 
   @@index([createdAt])
 }
+
+/// Producto/merch de la tienda
+model Product {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  description  String?
+  priceCOP     Int
+  /// Precio anterior (tachado), opcional
+  compareAtCOP Int?
+  category     String   @default("Merch")
+  /// URLs absolutas o /uploads/... (la primera es la portada)
+  images       String[] @default([])
+  /// Tallas/variantes, p. ej. ["S","M","L"]
+  sizes        String[] @default([])
+  /// null = sin control de inventario
+  stock        Int?
+  /// ACTIVE | DRAFT | SOLD_OUT
+  status       String   @default("ACTIVE")
+  featured     Boolean  @default(false)
+  sortOrder    Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([status])
+  @@index([category])
+  @@index([featured])
+  @@index([sortOrder])
+}
+
+/// Archivo subido desde el admin (fallback cuando no hay Vercel Blob)
+model MediaAsset {
+  id        String   @id
+  mime      String
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now())
+}

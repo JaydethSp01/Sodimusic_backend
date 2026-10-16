@@ -21,6 +21,44 @@ async function main(): Promise<void> {
   await prisma.beat.deleteMany();
   await prisma.release.deleteMany();
   await prisma.production.deleteMany();
+  await prisma.product.deleteMany();
+
+  await prisma.product.createMany({
+    data: [
+      {
+        name: "Camiseta Sodimusic negra",
+        slug: "camiseta-sodimusic-negra",
+        description: "Camiseta negra 100% algodón con el logo de Sodimusic al frente.",
+        priceCOP: 65_000,
+        category: "Camisetas",
+        sizes: ["S", "M", "L", "XL"],
+        status: "ACTIVE",
+        featured: true,
+        sortOrder: 1,
+      },
+      {
+        name: "Gorra XMEN",
+        slug: "gorra-xmen",
+        description: "Gorra snapback bordada XMEN · Sodimusic.",
+        priceCOP: 45_000,
+        category: "Gorras",
+        sizes: ["Única"],
+        status: "ACTIVE",
+        sortOrder: 2,
+      },
+      {
+        name: "Hoodie Champeta Roots",
+        slug: "hoodie-champeta-roots",
+        description: "Hoodie oversize edición Champeta Roots, interior afelpado.",
+        priceCOP: 120_000,
+        compareAtCOP: 140_000,
+        category: "Hoodies",
+        sizes: ["S", "M", "L", "XL"],
+        status: "ACTIVE",
+        sortOrder: 3,
+      },
+    ],
+  });
 
   const siteJson = SITE_CONTENT_DEFAULTS as unknown as object;
   await prisma.siteConfig.upsert({

@@ -23,6 +23,26 @@ const milestone = z.object({
   desc: z.string().min(1),
 });
 
+const stat = z.object({
+  value: z.number().int().min(0),
+  suffix: z.string(),
+  label: z.string().min(1),
+});
+
+const optionalUrlOrPath = z.string().optional();
+
+const youtubeChannel = z.object({
+  name: z.string().min(1),
+  /** URL pública del canal (https://www.youtube.com/@handle o /channel/UC…) */
+  url: urlOrPath,
+  /** ID de canal (UC…). Permite incrustar los últimos videos sin API key. */
+  channelId: z.string().optional(),
+  description: z.string().optional(),
+  avatarUrl: optionalUrlOrPath,
+  /** Video destacado (URL de YouTube); si falta, se usa la lista de subidas del canal. */
+  featuredVideoUrl: z.string().optional(),
+});
+
 export const siteContentSchema = z.object({
   brand: z.object({
     logoText: z.string().min(1),
@@ -58,6 +78,8 @@ export const siteContentSchema = z.object({
     contactTitle: z.string().min(1),
     contactSubtitle: z.string().min(1),
     milestones: z.array(milestone).min(1),
+    /** Cifras animadas bajo «Quiénes somos» */
+    stats: z.array(stat).min(1),
   }),
   footer: z.object({
     tagline: z.string().min(1),
@@ -112,11 +134,16 @@ export const siteContentSchema = z.object({
     crewSectionTitle: z.string().min(1),
     crewSectionDescription: z.string().min(1),
     youtubeCtaLabel: z.string().min(1),
+    /** Foto del productor principal (URL o /uploads/...) */
+    producerImageUrl: optionalUrlOrPath,
     members: z.array(
       z.object({
         name: z.string().min(1),
         genre: z.string().min(1),
         bio: z.string().min(1),
+        imageUrl: optionalUrlOrPath,
+        instagramUrl: z.string().optional(),
+        youtubeUrl: z.string().optional(),
       }),
     ).min(1),
   }),
@@ -163,6 +190,46 @@ export const siteContentSchema = z.object({
     youtubeCtaUpcoming: z.string().min(1),
     youtubeCtaReleased: z.string().min(1),
   }),
+  /** Canales de YouTube anclados (home y /artists) */
+  youtube: z.object({
+    showOnHome: z.boolean(),
+    sectionEyebrow: z.string(),
+    sectionTitle: z.string().min(1),
+    sectionSubtitle: z.string(),
+    subscribeLabel: z.string().min(1),
+    channels: z.array(youtubeChannel),
+  }),
+  /** Tienda / marketplace de merch (productos viven en la tabla Product) */
+  shop: z.object({
+    enabled: z.boolean(),
+    navLabel: z.string().min(1),
+    metaTitle: z.string().min(1),
+    metaDescription: z.string().min(1),
+    heroEyebrow: z.string().optional(),
+    heroTitle: z.string().min(1),
+    heroDescription: z.string().min(1),
+    heroImageUrl: optionalUrlOrPath,
+    emptyStateMessage: z.string().min(1),
+    /** Botón de compra (abre WhatsApp con el pedido) */
+    orderCtaLabel: z.string().min(1),
+    addToCartLabel: z.string().min(1),
+    /** Primera línea del mensaje de WhatsApp; luego se listan los productos */
+    whatsappOrderIntro: z.string().min(1),
+    shippingNote: z.string().optional(),
+    showOnHome: z.boolean(),
+    homeSectionEyebrow: z.string(),
+    homeSectionTitle: z.string().min(1),
+    homeSectionSubtitle: z.string(),
+    homeCtaLabel: z.string().min(1),
+  }),
+  /** Código QR que lleva a la página (descargable desde el admin) */
+  qr: z.object({
+    /** URL destino; vacío = NEXT_PUBLIC_SITE_URL */
+    targetUrl: z.string().optional(),
+    label: z.string().min(1),
+    showInFooter: z.boolean(),
+    footerCaption: z.string().min(1),
+  }),
 });
 
 export type SiteContent = z.infer<typeof siteContentSchema>;
@@ -179,6 +246,7 @@ export function mergeSiteContent(base: SiteContent, patch: unknown): SiteContent
       ...base.home,
       ...p.home,
       milestones: p.home?.milestones?.length ? p.home.milestones : base.home.milestones,
+      stats: p.home?.stats?.length ? p.home.stats : base.home.stats,
     },
     footer: { ...base.footer, ...p.footer },
     seo: { ...base.seo, ...p.seo },
@@ -208,6 +276,13 @@ export function mergeSiteContent(base: SiteContent, patch: unknown): SiteContent
     releasesPage: { ...base.releasesPage, ...p.releasesPage },
     bookingSuccess: { ...base.bookingSuccess, ...p.bookingSuccess },
     releaseDetail: { ...base.releaseDetail, ...p.releaseDetail },
+    youtube: {
+      ...base.youtube,
+      ...p.youtube,
+      channels: Array.isArray(p.youtube?.channels) ? p.youtube.channels : base.youtube.channels,
+    },
+    shop: { ...base.shop, ...p.shop },
+    qr: { ...base.qr, ...p.qr },
   };
   const parsed = siteContentSchema.safeParse(merged);
   return parsed.success ? parsed.data : base;

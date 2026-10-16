@@ -57,6 +57,12 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
         desc: "Sodimusic lanza su plataforma de booking y catálogo profesional.",
       },
     ],
+    stats: [
+      { value: 50, suffix: "+", label: "producciones" },
+      { value: 10, suffix: "", label: "años activos" },
+      { value: 5, suffix: "", label: "géneros" },
+      { value: 3, suffix: "", label: "ciudades" },
+    ],
   },
   footer: {
     tagline: "Champeta en el ADN, Caribe en cada beat. Desde María La Baja para el mundo.",
@@ -138,6 +144,7 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
     crewSectionDescription:
       "Crew de confianza en sesiones, directos y desarrollo de talento: del picó y la champeta al estudio y la tarima.",
     youtubeCtaLabel: "Canal de YouTube Sodimusic",
+    producerImageUrl: "",
     members: [
       {
         name: "J Col",
@@ -198,5 +205,49 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
     spotifyCtaLabel: "Escuchar en Spotify",
     youtubeCtaUpcoming: "Ver adelanto en YouTube",
     youtubeCtaReleased: "Ver en YouTube",
+  },
+  youtube: {
+    showOnHome: true,
+    sectionEyebrow: "YouTube",
+    sectionTitle: "Nuestros canales",
+    sectionSubtitle: "Videos oficiales, adelantos y sesiones del sello y su crew. Suscríbete para no perderte nada.",
+    subscribeLabel: "Suscribirse",
+    channels: [
+      {
+        name: "Sodimusic",
+        url: "https://www.youtube.com/channel/UCbCYvwiAsoIdumPbFBe1x6A",
+        channelId: "UCbCYvwiAsoIdumPbFBe1x6A",
+        description: "Canal oficial del sello: videos oficiales, lyric videos y lanzamientos.",
+        avatarUrl: "",
+        featuredVideoUrl: "",
+      },
+    ],
+  },
+  shop: {
+    enabled: true,
+    navLabel: "Tienda",
+    metaTitle: "Tienda Sodimusic",
+    metaDescription:
+      "Merch oficial de Sodimusic Company: camisetas, gorras y más con la identidad del sello. Pide por WhatsApp.",
+    heroEyebrow: "Marketplace",
+    heroTitle: "TIENDA SODIMUSIC",
+    heroDescription: "Merch oficial del sello. Elige tu producto, arma tu pedido y lo cerramos por WhatsApp.",
+    heroImageUrl: "",
+    emptyStateMessage: "Pronto habrá productos aquí. Mientras tanto, escríbenos por WhatsApp.",
+    orderCtaLabel: "Pedir por WhatsApp",
+    addToCartLabel: "Añadir al pedido",
+    whatsappOrderIntro: "Hola Sodimusic, quiero hacer este pedido:",
+    shippingNote: "Envíos a toda Colombia. Coordinamos pago y entrega por WhatsApp.",
+    showOnHome: true,
+    homeSectionEyebrow: "Tienda",
+    homeSectionTitle: "Merch oficial",
+    homeSectionSubtitle: "Lleva el sello puesto. Productos seleccionados de la tienda.",
+    homeCtaLabel: "Ver toda la tienda →",
+  },
+  qr: {
+    targetUrl: "",
+    label: "Escanea y entra a Sodimusic",
+    showInFooter: false,
+    footerCaption: "Escanea para abrir la página en tu celular",
   },
 };

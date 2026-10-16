@@ -6,9 +6,6 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { addDays, endOfDay, format, parseISO, startOfDay, subDays } from "date-fns";
-import { randomUUID } from "crypto";
-import { extname, join } from "path";
-import { readFile, writeFile } from "fs/promises";
 import { es } from "date-fns/locale";
 import { prisma } from "./lib/prisma.js";
 import { TIME_SLOT_LABELS } from "./lib/constants.js";
@@ -23,7 +20,10 @@ import { beatInterestSchema } from "./schemas/beat-interest.js";
 import { siteContentSchema } from "./schemas/site-config.js";
 import { optionalMediaUrl } from "./schemas/media-url.js";
 import { draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db.js";
-import { ensureUploadDir, UPLOAD_DIR } from "./lib/uploads-dir.js";
+import { ensureShopSchema } from "./lib/ensure-schema.js";
+import { getMedia, putMedia } from "./lib/storage.js";
+import { slugify, uniqueSlug } from "./lib/slugify.js";
+import { productCreateSchema, productUpdateSchema } from "./schemas/product.js";
 import { isSlotScope, monthDateKeyRange, parseDateKey, type BlockScope } from "./lib/blocked-dates.js";
 import {
   DEFAULT_CALENDAR_TIMEZONE,
@@ -113,7 +113,17 @@ export function createApp(): Hono {
 
   app.onError((err, c) => {
     const code = typeof err === "object" && err !== null && "code" in err ? String((err as { code: unknown }).code) : undefined;
+    // Errores Prisma conocidos → códigos HTTP útiles en vez de 500 genérico.
+    if (code === "P2025") {
+      return c.json({ error: "No encontrado", code }, 404);
+    }
+    if (code === "P2002") {
+      return c.json({ error: "Ya existe un registro con ese valor único", code }, 409);
+    }
     console.error(`[api] ${c.req.method} ${c.req.path} falló`, code ? `(${code})` : "", err);
+    if (code === "P1001" || code === "P1002" || code === "P1017" || (err as { name?: string }).name === "PrismaClientInitializationError") {
+      return c.json({ error: "Base de datos no disponible", code: code ?? "DB_UNAVAILABLE" }, 503);
+    }
     return c.json({ error: "Error interno del servidor", ...(code ? { code } : {}) }, 500);
   });
 
@@ -127,7 +137,15 @@ export function createApp(): Hono {
       return c.json({ ok: true, ms: Date.now() - started });
     } catch (err) {
       const e = err as { code?: unknown; name?: unknown; message?: unknown };
-      const message = typeof e.message === "string" ? e.message.split("\n")[0]?.slice(0, 200) : undefined;
+      const message =
+        typeof e.message === "string"
+          ? e.message
+              .split("\n")
+              .map((l) => l.trim())
+              .filter((l) => l.length > 0 && !l.startsWith("Invalid `"))[0]
+              ?.replace(/@[^\s:]+(:\d+)?/g, "@<host>")
+              .slice(0, 200)
+          : undefined;
       return c.json(
         {
           ok: false,
@@ -155,8 +173,9 @@ export function createApp(): Hono {
     if (!parsed.success) {
       return c.json({ error: "Credenciales inválidas" }, 400);
     }
-    const user = await prisma.adminUser.findUnique({
-      where: { email: parsed.data.email.toLowerCase().trim() },
+    // Búsqueda sin distinguir mayúsculas: el seed/admins existentes pueden tener el email con mayúsculas.
+    const user = await prisma.adminUser.findFirst({
+      where: { email: { equals: parsed.data.email.trim(), mode: "insensitive" } },
     });
     if (!user) {
       return c.json({ error: "Credenciales incorrectas" }, 401);
@@ -495,30 +514,65 @@ export function createApp(): Hono {
     if (!/^[a-zA-Z0-9._-]+$/.test(name)) {
       return c.json({ error: "Nombre inválido" }, 400);
     }
-    const filePath = join(UPLOAD_DIR, name);
-    try {
-      const buf = await readFile(filePath);
-      const ext = extname(name).toLowerCase();
-      const mime: Record<string, string> = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".mp3": "audio/mpeg",
-        ".wav": "audio/wav",
-        ".ogg": "audio/ogg",
-      };
-      const ct = mime[ext] ?? "application/octet-stream";
-      return new Response(buf, {
-        status: 200,
-        headers: {
-          "Content-Type": ct,
-          "Cache-Control": "public, max-age=31536000, immutable",
-        },
-      });
-    } catch {
+    await ensureShopSchema();
+    const media = await getMedia(name);
+    if (!media) {
       return c.json({ error: "No encontrado" }, 404);
     }
+    return new Response(new Uint8Array(media.data), {
+      status: 200,
+      headers: {
+        "Content-Type": media.mime,
+        "Content-Length": String(media.data.byteLength),
+        "Cache-Control": "public, max-age=31536000, immutable",
+      },
+    });
+  });
+
+  // ---------- Tienda (público) ----------
+
+  app.get("/api/products", async (c) => {
+    await ensureShopSchema();
+    const category = c.req.query("category");
+    const featuredOnly = c.req.query("featured") === "1";
+    const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? "1")) || 1);
+    const pageSize = Math.min(48, Math.max(1, Math.floor(Number(c.req.query("pageSize") ?? "24")) || 24));
+
+    const where: Prisma.ProductWhereInput = { status: { not: "DRAFT" } };
+    if (category && category !== "Todos") {
+      where.category = category;
+    }
+    if (featuredOnly) {
+      where.featured = true;
+    }
+
+    const [items, total, categoryRows] = await Promise.all([
+      prisma.product.findMany({
+        where,
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      prisma.product.count({ where }),
+      prisma.product.findMany({
+        where: { status: { not: "DRAFT" } },
+        select: { category: true },
+        distinct: ["category"],
+        orderBy: { category: "asc" },
+      }),
+    ]);
+
+    return c.json({ items, total, page, pageSize, categories: categoryRows.map((r) => r.category) });
+  });
+
+  app.get("/api/products/by-slug/:slug", async (c) => {
+    await ensureShopSchema();
+    const slug = c.req.param("slug");
+    const product = await prisma.product.findUnique({ where: { slug } });
+    if (!product || product.status === "DRAFT") {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    return c.json(product);
   });
 
   const admin = new Hono<{ Variables: AdminVars }>();
@@ -546,16 +600,26 @@ export function createApp(): Hono {
     const weekEnd = addDays(now, 7);
     const dayKeys14 = lastNDaysUtcDateKeys(14);
 
-    const [pendingSessions, sessionsWeek, beatsAvailable, productionsTotal, pageViewsTotal, sessionsByStatusRows] =
-      await Promise.all([
-        prisma.bookingSession.count({ where: { status: "PENDING" } }),
-        prisma.bookingSession.count({
-          where: { scheduledDate: { gte: startOfDay(now), lte: weekEnd } } }),
-        prisma.beat.count({ where: { status: "AVAILABLE" } }),
-        prisma.production.count(),
-        prisma.pageView.count(),
-        prisma.bookingSession.groupBy({ by: ["status"], _count: { _all: true } }),
-      ]);
+    await ensureShopSchema();
+    const [
+      pendingSessions,
+      sessionsWeek,
+      beatsAvailable,
+      productionsTotal,
+      pageViewsTotal,
+      sessionsByStatusRows,
+      productsActive,
+    ] = await Promise.all([
+      prisma.bookingSession.count({ where: { status: "PENDING" } }),
+      prisma.bookingSession.count({
+        where: { scheduledDate: { gte: startOfDay(now), lte: weekEnd } },
+      }),
+      prisma.beat.count({ where: { status: "AVAILABLE" } }),
+      prisma.production.count(),
+      prisma.pageView.count(),
+      prisma.bookingSession.groupBy({ by: ["status"], _count: { _all: true } }),
+      prisma.product.count({ where: { status: "ACTIVE" } }),
+    ]);
 
     let pageViewsByDay: { date: string; count: number }[] = [];
     let sessionsCreatedByDay: { date: string; count: number }[] = [];
@@ -602,6 +666,7 @@ export function createApp(): Hono {
       sessionsWeek,
       beatsAvailable,
       productionsTotal,
+      productsActive,
       pageViewsTotal,
       pageViewsLast7Days,
       pageViewsByDay,
@@ -1181,8 +1246,119 @@ export function createApp(): Hono {
     });
   });
 
+  // ---------- Tienda (admin) ----------
+
+  admin.get("/products", async (c) => {
+    await ensureShopSchema();
+    const items = await prisma.product.findMany({
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+    });
+    return c.json({ items });
+  });
+
+  admin.post("/products", async (c) => {
+    await ensureShopSchema();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = productCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const d = parsed.data;
+    const slugExists = async (s: string): Promise<boolean> =>
+      (await prisma.product.count({ where: { slug: s } })) > 0;
+    let slug: string;
+    if (d.slug) {
+      if (await slugExists(d.slug)) {
+        return c.json({ error: "Ya existe un producto con ese slug" }, 409);
+      }
+      slug = d.slug;
+    } else {
+      slug = await uniqueSlug(slugify(d.name), slugExists);
+    }
+    const row = await prisma.product.create({
+      data: {
+        name: d.name,
+        slug,
+        description: d.description ?? null,
+        priceCOP: d.priceCOP,
+        compareAtCOP: d.compareAtCOP ?? null,
+        category: d.category,
+        images: d.images,
+        sizes: d.sizes,
+        stock: d.stock ?? null,
+        status: d.status,
+        featured: d.featured,
+        sortOrder: d.sortOrder,
+      },
+    });
+    return c.json(row, 201);
+  });
+
+  admin.patch("/products/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = productUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const existing = await prisma.product.findUnique({ where: { id } });
+    if (!existing) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    const d = parsed.data;
+    if (d.slug !== undefined && d.slug !== existing.slug) {
+      const clash = await prisma.product.count({ where: { slug: d.slug, id: { not: id } } });
+      if (clash > 0) {
+        return c.json({ error: "Ya existe un producto con ese slug" }, 409);
+      }
+    }
+    const data: Prisma.ProductUpdateInput = {};
+    if (d.name !== undefined) data.name = d.name;
+    if (d.slug !== undefined) data.slug = d.slug;
+    if (d.description !== undefined) data.description = d.description;
+    if (d.priceCOP !== undefined) data.priceCOP = d.priceCOP;
+    if (d.compareAtCOP !== undefined) data.compareAtCOP = d.compareAtCOP;
+    if (d.category !== undefined) data.category = d.category;
+    if (d.images !== undefined) data.images = d.images;
+    if (d.sizes !== undefined) data.sizes = d.sizes;
+    if (d.stock !== undefined) data.stock = d.stock;
+    if (d.status !== undefined) data.status = d.status;
+    if (d.featured !== undefined) data.featured = d.featured;
+    if (d.sortOrder !== undefined) data.sortOrder = d.sortOrder;
+    const updated = await prisma.product.update({ where: { id }, data });
+    return c.json(updated);
+  });
+
+  admin.delete("/products/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    const deleted = await prisma.product.deleteMany({ where: { id } });
+    if (deleted.count === 0) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    return c.json({ ok: true });
+  });
+
   admin.post("/upload", async (c) => {
-    ensureUploadDir();
+    await ensureShopSchema();
+    /** Límite de body en funciones de Vercel (~4.5 MB). */
+    const maxBytes = Math.floor(4.5 * 1024 * 1024);
+    const tooLarge = (): Response => c.json({ error: "Archivo demasiado grande (máx. 4,5 MB en Vercel)" }, 413);
+    const declared = Number(c.req.header("content-length") ?? "0");
+    if (Number.isFinite(declared) && declared > maxBytes + 4096) {
+      return tooLarge();
+    }
     let body: Record<string, unknown>;
     try {
       body = (await c.req.parseBody()) as Record<string, unknown>;
@@ -1193,26 +1369,26 @@ export function createApp(): Hono {
     if (!(file instanceof File)) {
       return c.json({ error: "Campo 'file' requerido" }, 400);
     }
-    const maxBytes = 15 * 1024 * 1024;
     if (file.size > maxBytes) {
-      return c.json({ error: "Archivo demasiado grande (máx. 15 MB)" }, 400);
+      return tooLarge();
     }
     const allowed: Record<string, string> = {
       "image/jpeg": ".jpg",
       "image/png": ".png",
       "image/webp": ".webp",
+      "image/gif": ".gif",
       "audio/mpeg": ".mp3",
       "audio/wav": ".wav",
       "audio/wave": ".wav",
     };
-    const ext = allowed[file.type];
+    const mime = file.type.split(";")[0]?.trim().toLowerCase() ?? "";
+    const ext = allowed[mime];
     if (!ext) {
-      return c.json({ error: `Tipo no permitido: ${file.type}` }, 400);
+      return c.json({ error: `Tipo no permitido: ${file.type || "desconocido"}` }, 400);
     }
-    const id = `${randomUUID()}${ext}`;
-    const buf = Buffer.from(await file.arrayBuffer());
-    await writeFile(join(UPLOAD_DIR, id), buf);
-    return c.json({ url: `/uploads/${id}` });
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const { url } = await putMedia({ buffer, mime, ext });
+    return c.json({ url });
   });
 
   admin.get("/sessions/export.csv", async () => {
