@@ -111,7 +111,35 @@ export function createApp(): Hono {
     }),
   );
 
+  app.onError((err, c) => {
+    const code = typeof err === "object" && err !== null && "code" in err ? String((err as { code: unknown }).code) : undefined;
+    console.error(`[api] ${c.req.method} ${c.req.path} falló`, code ? `(${code})` : "", err);
+    return c.json({ error: "Error interno del servidor", ...(code ? { code } : {}) }, 500);
+  });
+
   app.get("/health", (c) => c.json({ ok: true }));
+
+  /** Comprueba la conexión a la base de datos (sin exponer credenciales). */
+  app.get("/health/db", async (c) => {
+    const started = Date.now();
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      return c.json({ ok: true, ms: Date.now() - started });
+    } catch (err) {
+      const e = err as { code?: unknown; name?: unknown; message?: unknown };
+      const message = typeof e.message === "string" ? e.message.split("\n")[0]?.slice(0, 200) : undefined;
+      return c.json(
+        {
+          ok: false,
+          ms: Date.now() - started,
+          code: typeof e.code === "string" ? e.code : undefined,
+          name: typeof e.name === "string" ? e.name : undefined,
+          message,
+        },
+        503,
+      );
+    }
+  });
 
   app.post("/api/auth/login", async (c) => {
     if (!JWT_SECRET) {
