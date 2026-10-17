@@ -1,8 +1,10 @@
+-- Idempotente: ensureShopSchema() (runtime) puede haber creado estas tablas antes del build.
+
 -- AlterTable
 ALTER TABLE "SiteConfig" ALTER COLUMN "id" SET DEFAULT 'default';
 
 -- CreateTable
-CREATE TABLE "Product" (
+CREATE TABLE IF NOT EXISTS "Product" (
     "id" TEXT NOT NULL,
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
@@ -23,7 +25,7 @@ CREATE TABLE "Product" (
 );
 
 -- CreateTable
-CREATE TABLE "MediaAsset" (
+CREATE TABLE IF NOT EXISTS "MediaAsset" (
     "id" TEXT NOT NULL,
     "mime" TEXT NOT NULL,
     "size" INTEGER NOT NULL,
@@ -34,16 +36,16 @@ CREATE TABLE "MediaAsset" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "Product_slug_key" ON "Product"("slug");
+CREATE UNIQUE INDEX IF NOT EXISTS "Product_slug_key" ON "Product"("slug");
 
 -- CreateIndex
-CREATE INDEX "Product_status_idx" ON "Product"("status");
+CREATE INDEX IF NOT EXISTS "Product_status_idx" ON "Product"("status");
 
 -- CreateIndex
-CREATE INDEX "Product_category_idx" ON "Product"("category");
+CREATE INDEX IF NOT EXISTS "Product_category_idx" ON "Product"("category");
 
 -- CreateIndex
-CREATE INDEX "Product_featured_idx" ON "Product"("featured");
+CREATE INDEX IF NOT EXISTS "Product_featured_idx" ON "Product"("featured");
 
 -- CreateIndex
-CREATE INDEX "Product_sortOrder_idx" ON "Product"("sortOrder");
+CREATE INDEX IF NOT EXISTS "Product_sortOrder_idx" ON "Product"("sortOrder");

@@ -118,6 +118,10 @@ export const siteContentSchema = z.object({
           icon: z.string().min(1),
           title: z.string().min(1),
           desc: z.string().min(1),
+          /** Tarifa "desde" en COP (opcional) */
+          priceFromCOP: z.number().int().min(0).optional(),
+          /** "por hora", "por canción"… */
+          priceNote: z.string().optional(),
         }),
       )
       .min(1),
@@ -144,6 +148,9 @@ export const siteContentSchema = z.object({
         imageUrl: optionalUrlOrPath,
         instagramUrl: z.string().optional(),
         youtubeUrl: z.string().optional(),
+        spotifyUrl: z.string().optional(),
+        tiktokUrl: z.string().optional(),
+        role: z.string().optional(),
       }),
     ).min(1),
   }),
@@ -190,14 +197,66 @@ export const siteContentSchema = z.object({
     youtubeCtaUpcoming: z.string().min(1),
     youtubeCtaReleased: z.string().min(1),
   }),
-  /** Canales de YouTube anclados (home y /artists) */
+  /** Sección de canales de YouTube (los canales viven en la tabla YoutubeChannel: /api/channels) */
   youtube: z.object({
     showOnHome: z.boolean(),
     sectionEyebrow: z.string(),
     sectionTitle: z.string().min(1),
     sectionSubtitle: z.string(),
     subscribeLabel: z.string().min(1),
+    /** Máximo de canales destacados en el home */
+    homeLimit: z.number().int().min(1).max(48),
+    allChannelsLabel: z.string().min(1),
+    pageTitle: z.string().min(1),
+    pageDescription: z.string(),
+    /** Obsoleto: se conserva solo para datos antiguos (se migra a YoutubeChannel en el arranque). */
     channels: z.array(youtubeChannel),
+  }),
+  /** Datos legales y de cumplimiento (Ley 1581, SIC, IVA, anticipos) */
+  legal: z.object({
+    /** Nombre comercial */
+    businessName: z.string().min(1),
+    /** Razón social o nombre del comerciante; "" = pendiente */
+    legalName: z.string(),
+    nit: z.string(),
+    address: z.string(),
+    city: z.string(),
+    country: z.string(),
+    /** Correo de PQR / datos personales ("" = pendiente) */
+    email: z.union([z.literal(""), z.string().email()]),
+    /** WhatsApp E.164 sin + */
+    phone: z.string(),
+    hours: z.string(),
+    ivaIncluded: z.boolean(),
+    ivaResponsible: z.boolean(),
+    /** Anticipo del estudio, 0–100 */
+    depositPercent: z.number().int().min(0).max(100),
+    cancellationHours: z.number().int().min(0),
+    policyVersion: z.string().min(1),
+    termsVersion: z.string().min(1),
+    showNewsletter: z.boolean(),
+    newsletterTitle: z.string().min(1),
+    newsletterSubtitle: z.string(),
+    newsletterCtaLabel: z.string().min(1),
+    floatingWhatsapp: z.boolean(),
+  }),
+  /** Página /contacto y bloque de prensa (EPK). OJO: `contact` (email, whatsapp) ya existe. */
+  contactPage: z.object({
+    pageTitle: z.string().min(1),
+    pageDescription: z.string(),
+    subjects: z
+      .array(
+        z.object({
+          value: z.string().min(1),
+          label: z.string().min(1),
+        }),
+      )
+      .min(1),
+    pressTitle: z.string(),
+    pressBody: z.string(),
+    pressLogoUrl: z.string(),
+    pressPhotoUrls: z.array(z.string()),
+    pressKitUrl: z.string(),
   }),
   /** Tienda / marketplace de merch (productos viven en la tabla Product) */
   shop: z.object({
@@ -280,6 +339,15 @@ export function mergeSiteContent(base: SiteContent, patch: unknown): SiteContent
       ...base.youtube,
       ...p.youtube,
       channels: Array.isArray(p.youtube?.channels) ? p.youtube.channels : base.youtube.channels,
+    },
+    legal: { ...base.legal, ...p.legal },
+    contactPage: {
+      ...base.contactPage,
+      ...p.contactPage,
+      subjects: p.contactPage?.subjects?.length ? p.contactPage.subjects : base.contactPage.subjects,
+      pressPhotoUrls: Array.isArray(p.contactPage?.pressPhotoUrls)
+        ? p.contactPage.pressPhotoUrls
+        : base.contactPage.pressPhotoUrls,
     },
     shop: { ...base.shop, ...p.shop },
     qr: { ...base.qr, ...p.qr },

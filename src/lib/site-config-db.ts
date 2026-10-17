@@ -25,3 +25,13 @@ export function publishedContent(row: { publishedJson: unknown } | null): SiteCo
 export function draftContent(row: { draftJson: unknown } | null): SiteContent {
   return mergeSiteContent(SITE_CONTENT_DEFAULTS, row?.draftJson ?? {});
 }
+
+/** Versión vigente de la política de privacidad (SiteConfig publicado → defaults). */
+export async function currentPolicyVersion(): Promise<string> {
+  try {
+    const row = await prisma.siteConfig.findUnique({ where: { id: "default" } });
+    return publishedContent(row).legal.policyVersion;
+  } catch {
+    return SITE_CONTENT_DEFAULTS.legal.policyVersion;
+  }
+}

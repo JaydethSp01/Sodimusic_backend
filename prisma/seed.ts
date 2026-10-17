@@ -5,6 +5,23 @@ import { SITE_CONTENT_DEFAULTS } from "../src/lib/site-config-defaults.js";
 
 const prisma = new PrismaClient();
 
+const SODIMUSIC_CHANNEL_ID = "UCbCYvwiAsoIdumPbFBe1x6A";
+
+/** Precios por licencia a partir del precio "desde": MP3 = base, WAV = +30 %, STEMS = x2, EXCLUSIVE = x4. */
+function licensePricesFrom(priceCOP: number): {
+  priceMp3COP: number;
+  priceWavCOP: number;
+  priceStemsCOP: number;
+  priceExclusiveCOP: number;
+} {
+  return {
+    priceMp3COP: priceCOP,
+    priceWavCOP: Math.round(priceCOP * 1.3),
+    priceStemsCOP: priceCOP * 2,
+    priceExclusiveCOP: priceCOP * 4,
+  };
+}
+
 async function main(): Promise<void> {
   const passwordHash = await bcrypt.hash("sodimusic2016", 12);
 
@@ -38,10 +55,10 @@ async function main(): Promise<void> {
         sortOrder: 1,
       },
       {
-        name: "Gorra XMEN",
-        slug: "gorra-xmen",
+        name: "Gorra Sodimusic",
+        slug: "gorra-sodimusic",
         images: ["https://images.unsplash.com/photo-1588850561407-ed78c282e89b?q=80&w=1200&auto=format&fit=crop"],
-        description: "Gorra snapback bordada XMEN · Sodimusic.",
+        description: "Gorra snapback bordada con el logo de Sodimusic.",
         priceCOP: 45_000,
         category: "Gorras",
         sizes: ["Única"],
@@ -74,6 +91,25 @@ async function main(): Promise<void> {
     },
     update: {},
   });
+
+  // Canal oficial en la tabla YoutubeChannel (destacado). Idempotente por channelId.
+  const existingChannel = await prisma.youtubeChannel.findFirst({ where: { channelId: SODIMUSIC_CHANNEL_ID } });
+  if (!existingChannel) {
+    await prisma.youtubeChannel.create({
+      data: {
+        name: "Sodimusic",
+        url: `https://www.youtube.com/channel/${SODIMUSIC_CHANNEL_ID}`,
+        channelId: SODIMUSIC_CHANNEL_ID,
+        description: "Canal oficial del sello: videos oficiales, lyric videos y lanzamientos.",
+        category: "Sello",
+        featured: true,
+        status: "ACTIVE",
+        sortOrder: 0,
+      },
+    });
+  } else if (!existingChannel.featured) {
+    await prisma.youtubeChannel.update({ where: { id: existingChannel.id }, data: { featured: true } });
+  }
 
   const productions = [
     {
@@ -184,7 +220,7 @@ async function main(): Promise<void> {
   ];
 
   for (const b of beats) {
-    await prisma.beat.create({ data: b });
+    await prisma.beat.create({ data: { ...b, ...licensePricesFrom(b.priceCOP) } });
   }
 
   await prisma.release.createMany({
@@ -222,18 +258,12 @@ async function main(): Promise<void> {
         upcoming: true,
         description:
           "Adelanto del próximo ciclo del sello: trap y Caribe con identidad María La Baja. Snippets y fecha por confirmar — suscríbete al canal para no perderte el drop.",
-        youtubeUrl: "https://www.youtube.com/channel/UCbCYvwiAsoIdumPbFBe1x6A",
-      },
-      {
-        title: "Lo que viene (single)",
-        slug: "lo-que-viene-single",
-        coverUrl: "https://images.unsplash.com/photo-1520523839897-bd0b52f945a0?q=80&w=1200&auto=format&fit=crop",
-        artistName: "Sodimusic",
-        genre: "Afrobeat",
-        releaseYear: 2026,
-        featured: false,
-        upcoming: true,
-        description: "Espacio reservado para el próximo single promocional: aquí colocarás previews, arte y enlaces a adelantos cuando estén listos.",
+        youtubeUrl: `https://www.youtube.com/channel/${SODIMUSIC_CHANNEL_ID}`,
+        // Smart links de ejemplo (solo en releases que ya tienen youtubeUrl)
+        spotifyUrl: "https://open.spotify.com/search/sodimusic",
+        appleUrl: "https://music.apple.com/co/search?term=sodimusic",
+        deezerUrl: "https://www.deezer.com/search/sodimusic",
+        releaseDate: new Date("2026-12-15T00:00:00.000Z"),
       },
     ],
   });

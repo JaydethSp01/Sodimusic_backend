@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { policyAcceptedField, policyVersionField } from "./consent.js";
 
 export const musicReferenceSchema = z
   .string()
@@ -39,7 +40,13 @@ export const bookingFullSchema = z.object({
     .regex(/^\+?[\d\s\-()]+$/, "Formato de teléfono inválido"),
   email: z.string().email("Email inválido"),
   instagram: z.string().optional(),
-  acceptPolicy: z.boolean().refine((v) => v === true, { message: "Debes aceptar la política" }),
+  /** Obsoleto (clientes antiguos); la aceptación válida es `policyAccepted`. */
+  acceptPolicy: z.boolean().optional(),
+  policyAccepted: policyAcceptedField,
+  policyVersion: policyVersionField,
+  marketingOptIn: z.boolean().optional(),
+  /** false = menor de edad: se acepta pero requiere autorización de acudiente. */
+  isAdult: z.boolean().optional(),
 });
 
 export type BookingFullInput = z.infer<typeof bookingFullSchema>;

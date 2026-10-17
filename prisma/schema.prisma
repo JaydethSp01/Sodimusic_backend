@@ -4,7 +4,7 @@ generator client {
 
 datasource db {
   provider  = "postgresql"
-  url      = env("DATABASE_URL")
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
@@ -28,21 +28,28 @@ model Production {
 }
 
 model Release {
-  id          String   @id @default(cuid())
-  title       String
-  slug        String   @unique
-  artistName  String
-  genre       String
-  releaseYear Int
-  coverUrl    String?
-  spotifyUrl  String?
-  youtubeUrl  String?
-  description String?
-  featured    Boolean  @default(false)
+  id            String    @id @default(cuid())
+  title         String
+  slug          String    @unique
+  artistName    String
+  genre         String
+  releaseYear   Int
+  coverUrl      String?
+  spotifyUrl    String?
+  youtubeUrl    String?
+  appleUrl      String?
+  deezerUrl     String?
+  amazonUrl     String?
+  tidalUrl      String?
+  soundcloudUrl String?
+  /// Fecha de lanzamiento (si es futura, el front muestra cuenta regresiva)
+  releaseDate   DateTime?
+  description   String?
+  featured      Boolean   @default(false)
   /// Si es true, aparece en /releases (página de próximos lanzamientos y adelantos). Los ya publicados van con false.
-  upcoming    Boolean  @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  upcoming      Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   @@index([genre])
   @@index([releaseYear])
@@ -50,42 +57,53 @@ model Release {
 }
 
 model Beat {
-  id        String @id @default(cuid())
-  title     String
-  genre     String
-  bpm       Int?
-  mood      String?
-  priceCOP  Int
-  status    String @default("AVAILABLE")
-  audioUrl  String?
-  coverUrl  String?
-  exclusive Boolean    @default(false)
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  id                String   @id @default(cuid())
+  title             String
+  genre             String
+  bpm               Int?
+  mood              String?
+  /// Precio "desde" (licencia más barata)
+  priceCOP          Int
+  priceMp3COP       Int?
+  priceWavCOP       Int?
+  priceStemsCOP     Int?
+  priceExclusiveCOP Int?
+  status            String   @default("AVAILABLE")
+  /// Preview de audio (MP3)
+  audioUrl          String?
+  coverUrl          String?
+  exclusive         Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@index([genre])
   @@index([status])
 }
 
 model BookingSession {
-  id              String   @id @default(cuid())
-  serviceType     String
-  artistName      String
-  artistEmail     String
-  artistPhone     String
-  artistInstagram String?
-  musicReference  String
-  vision          String?
-  genres          String
-  isFirstTime     Boolean  @default(true)
-  scheduledDate   DateTime
-  timeSlot        String
-  status          String   @default("PENDING")
-  internalNotes   String?
-  confirmedAt     DateTime?
-  completedAt     DateTime?
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id               String    @id @default(cuid())
+  serviceType      String
+  artistName       String
+  artistEmail      String
+  artistPhone      String
+  artistInstagram  String?
+  musicReference   String
+  vision           String?
+  genres           String
+  isFirstTime      Boolean   @default(true)
+  scheduledDate    DateTime
+  timeSlot         String
+  status           String    @default("PENDING")
+  internalNotes    String?
+  confirmedAt      DateTime?
+  completedAt      DateTime?
+  policyAcceptedAt DateTime?
+  policyVersion    String?
+  marketingOptIn   Boolean   @default(false)
+  /// null = no respondió; false = menor de edad (requiere acudiente)
+  isAdult          Boolean?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   @@index([status])
   @@index([scheduledDate])
@@ -114,12 +132,19 @@ model AdminUser {
 
 /// Configuración única del sitio (textos, imágenes, enlaces). Borrador vs publicado.
 model SiteConfig {
-  id              String   @id @default("default")
-  publishedJson   Json
-  draftJson       Json
-  publishedAt     DateTime?
-  draftUpdatedAt  DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  id             String    @id @default("default")
+  publishedJson  Json
+  draftJson      Json
+  publishedAt    DateTime?
+  draftUpdatedAt DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+/// Metadatos internos de la app (flags de migración de datos, etc.). Clave/valor.
+model AppMeta {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 /// Vista de página pública (para métricas en el panel admin). Sin datos personales.
@@ -167,4 +192,79 @@ model MediaAsset {
   size      Int
   data      Bytes
   createdAt DateTime @default(now())
+}
+
+/// Canal de YouTube (sello, crew, artistas, aliados). Sustituye a `youtube.channels` del SiteConfig.
+model YoutubeChannel {
+  id               String   @id @default(cuid())
+  name             String
+  url              String
+  /// UC…
+  channelId        String?
+  /// @handle
+  handle           String?
+  description      String?
+  avatarUrl        String?
+  featuredVideoUrl String?
+  /// Crew | Artista | Sello | Aliado…
+  category         String   @default("Crew")
+  featured         Boolean  @default(false)
+  /// ACTIVE | HIDDEN
+  status           String   @default("ACTIVE")
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status, featured, sortOrder])
+}
+
+/// Interés en un beat (lead CRM)
+model BeatInterest {
+  id               String   @id @default(cuid())
+  beatId           String?
+  beatTitle        String
+  artistName       String
+  email            String
+  phone            String?
+  instagram        String?
+  message          String?
+  exclusiveIntent  Boolean  @default(false)
+  /// MP3 | WAV | STEMS | EXCLUSIVE
+  licenseType      String?
+  policyAcceptedAt DateTime
+  policyVersion    String
+  marketingOptIn   Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+}
+
+/// Mensaje del formulario de contacto / prensa
+model ContactMessage {
+  id               String   @id @default(cuid())
+  /// PRENSA | DEMO | BOOKING_ARTISTA | COLABORACION | OTRO
+  subject          String
+  name             String
+  email            String
+  phone            String?
+  message          String
+  policyAcceptedAt DateTime
+  policyVersion    String
+  /// NEW | READ | ARCHIVED
+  status           String   @default("NEW")
+  createdAt        DateTime @default(now())
+
+  @@index([status, createdAt])
+}
+
+/// Suscriptor del newsletter
+model Subscriber {
+  id               String    @id @default(cuid())
+  email            String    @unique
+  name             String?
+  source           String    @default("footer")
+  policyAcceptedAt DateTime
+  policyVersion    String
+  unsubscribedAt   DateTime?
+  createdAt        DateTime  @default(now())
 }

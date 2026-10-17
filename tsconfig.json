@@ -14,5 +14,5 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "src/**/*.test.ts", "src/**/*.integration.test.ts", "src/test-admin-creds.ts"]
+  "exclude": ["node_modules", "src/**/*.test.ts", "src/**/*.integration.test.ts", "src/test-admin-creds.ts", "src/test-utils/**"]
 }

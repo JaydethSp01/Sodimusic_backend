@@ -186,6 +186,68 @@ export async function sendBeatInterestEmails(input: {
   });
 }
 
+const CONTACT_SUBJECT_LABELS: Record<string, string> = {
+  PRENSA: "Prensa y medios",
+  DEMO: "Envío de demo",
+  BOOKING_ARTISTA: "Booking de artista / show",
+  COLABORACION: "Colaboración o alianza",
+  OTRO: "Otro",
+};
+
+export async function sendContactMessageToAdmin(input: {
+  subject: string;
+  name: string;
+  email: string;
+  phone?: string | null;
+  message: string;
+}): Promise<Result<{ id: string }, Error>> {
+  const subjectLabel = CONTACT_SUBJECT_LABELS[input.subject] ?? input.subject;
+  const html = `
+    <div style="background:#080808;color:#F0EDE8;font-family:system-ui,sans-serif;padding:32px;max-width:640px;">
+      <h1 style="color:#FF6B00;">Contacto: ${escapeHtml(subjectLabel)}</h1>
+      <p><strong>Nombre:</strong> ${escapeHtml(input.name)}</p>
+      <p><strong>Email:</strong> ${escapeHtml(input.email)}</p>
+      ${input.phone ? `<p><strong>Teléfono:</strong> ${escapeHtml(input.phone)}</p>` : ""}
+      <p><strong>Mensaje:</strong></p>
+      <p style="white-space:pre-wrap;color:#A09890;">${escapeHtml(input.message)}</p>
+      <p><a href="${SITE_URL}/admin/dashboard/mensajes" style="color:#FF6B00;">Ver en el panel de admin</a></p>
+      ${brandFooter}
+    </div>
+  `;
+  return sendOrLog({
+    to: ADMIN_EMAIL,
+    subject: `Contacto (${subjectLabel}): ${input.name}`,
+    html,
+  });
+}
+
+/** Bienvenida al newsletter con enlace de baja (GET firmado con HMAC). */
+export async function sendNewsletterWelcome(input: {
+  email: string;
+  name?: string | null;
+  unsubscribeUrl: string;
+}): Promise<Result<{ id: string }, Error>> {
+  const greeting = input.name && input.name.trim().length > 0 ? `Hola <strong>${escapeHtml(input.name.trim())}</strong>,` : "Hola,";
+  const html = `
+    <div style="background:#080808;color:#F0EDE8;font-family:system-ui,sans-serif;padding:32px;max-width:560px;">
+      <h1 style="color:#FF6B00;font-size:22px;">Bienvenido al newsletter de ${SITE_NAME}</h1>
+      <p>${greeting}</p>
+      <p>Te avisaremos de lanzamientos, beats nuevos y novedades del estudio. Sin spam.</p>
+      <a href="${SITE_URL}/releases" style="display:inline-block;margin-top:16px;padding:12px 20px;background:#FF6B00;color:#fff;text-decoration:none;border-radius:4px;">Ver lanzamientos</a>
+      <p style="margin:24px 0 0;font-size:12px;color:#A09890;">
+        Si no te suscribiste o ya no quieres recibir correos, puedes
+        <a href="${escapeAttr(input.unsubscribeUrl)}" style="color:#FF6B00;">darte de baja aquí</a>.
+      </p>
+      ${brandFooter}
+    </div>
+  `;
+  return sendOrLog({
+    to: input.email,
+    subject: `Bienvenido al newsletter de ${SITE_NAME}`,
+    html,
+  });
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")

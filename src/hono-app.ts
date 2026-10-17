@@ -11,15 +11,30 @@ import { prisma } from "./lib/prisma.js";
 import { TIME_SLOT_LABELS } from "./lib/constants.js";
 import {
   sendBeatInterestEmails,
+  sendContactMessageToAdmin,
+  sendNewsletterWelcome,
   sendSessionAlertToAdmin,
   sendSessionConfirmedToArtist,
   sendSessionPendingToArtist,
 } from "./lib/email.js";
+import { csvCell } from "./lib/csv.js";
+import { pagination, searchTerm } from "./lib/query.js";
+import { rateLimit } from "./lib/rate-limit.js";
+import { unsubscribeUrl, verifyUnsubscribeToken } from "./lib/newsletter-token.js";
 import { bookingFullSchema } from "./schemas/booking.js";
 import { beatInterestSchema } from "./schemas/beat-interest.js";
 import { siteContentSchema } from "./schemas/site-config.js";
 import { optionalMediaUrl } from "./schemas/media-url.js";
-import { draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db.js";
+import { POLICY_NOT_ACCEPTED_MESSAGE, hasAcceptedPolicy } from "./schemas/consent.js";
+import {
+  channelCreateSchema,
+  channelReorderSchema,
+  channelUpdateSchema,
+  parseYoutubeChannelUrl,
+} from "./schemas/channel.js";
+import { newsletterSubscribeSchema, newsletterUnsubscribeSchema } from "./schemas/newsletter.js";
+import { contactMessageSchema, contactStatusSchema } from "./schemas/contact.js";
+import { currentPolicyVersion, draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db.js";
 import { ensureShopSchema } from "./lib/ensure-schema.js";
 import { getMedia, putMedia } from "./lib/storage.js";
 import { slugify, uniqueSlug } from "./lib/slugify.js";
@@ -46,6 +61,43 @@ function normalizePublicPath(raw: unknown): string {
   if (!t.startsWith("/") || t.includes("..")) return "/";
   return t.length ? t : "/";
 }
+
+/**
+ * Cache-Control de las respuestas públicas que el admin edita (site-config, beats, products, releases,
+ * productions, channels): Next cachea por tags y revalida al publicar; el CDN no debe retener nada.
+ * Solo `/uploads/:name` (contenido inmutable por nombre) lleva `immutable`.
+ */
+export const PUBLIC_CACHE_CONTROL = "public, max-age=0, s-maxage=0, must-revalidate";
+
+/** Base pública de esta API para enlaces en correos: API_URL, o el origen de la petición (proxy-aware). */
+function apiBaseUrl(c: { req: { url: string; header(name: string): string | undefined } }): string {
+  const fromEnv = process.env["API_URL"]?.trim();
+  if (fromEnv) return fromEnv.replace(/\/+$/, "");
+  const u = new URL(c.req.url);
+  const proto = c.req.header("x-forwarded-proto")?.split(",")[0]?.trim() || u.protocol.replace(":", "");
+  const host = c.req.header("x-forwarded-host")?.split(",")[0]?.trim() || c.req.header("host") || u.host;
+  return `${proto}://${host}`;
+}
+
+/** URL del frontend para redirecciones (enlace de baja del newsletter). */
+function frontendBaseUrl(): string {
+  return corsAllowedOrigins()[0] ?? "http://localhost:3000";
+}
+
+/** Fecha ISO opcional: "" o null → null; inválida → error. */
+const optionalDate = z
+  .string()
+  .nullish()
+  .transform((v, ctx) => {
+    if (v === undefined) return undefined;
+    if (v === null || v.trim() === "") return null;
+    const d = new Date(v);
+    if (Number.isNaN(d.getTime())) {
+      ctx.addIssue({ code: "custom", message: "Fecha inválida" });
+      return z.NEVER;
+    }
+    return d;
+  });
 
 /** Orígenes explícitos (env + localhost). Sin barra final. */
 function corsAllowedOrigins(): string[] {
@@ -225,18 +277,26 @@ export function createApp(): Hono {
     return c.json({ date: dateParam, occupied, blocked: false });
   });
 
-  app.post("/api/booking/sessions", async (c) => {
+  /** Rate limit por IP de los formularios públicos (10 por 10 min); RATE_LIMIT_DISABLED=1 lo desactiva. */
+  const publicFormLimit = rateLimit({ max: 10, windowMs: 10 * 60 * 1000 });
+  const beatInterestLimit = rateLimit({ max: 10, windowMs: 10 * 60 * 1000, shape: "success" });
+
+  app.post("/api/booking/sessions", publicFormLimit, async (c) => {
     let raw: unknown;
     try {
       raw = await c.req.json();
     } catch {
       return c.json({ ok: false, error: "JSON inválido" }, 400);
     }
+    if (!hasAcceptedPolicy(raw)) {
+      return c.json({ ok: false, error: POLICY_NOT_ACCEPTED_MESSAGE }, 400);
+    }
     const parsed = bookingFullSchema.safeParse(raw);
     if (!parsed.success) {
       return c.json({ ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, 400);
     }
     const data = parsed.data;
+    const policyVersion = data.policyVersion ?? (await currentPolicyVersion());
     const dayStart = startOfDay(data.scheduledDate);
     const dayEnd = endOfDay(data.scheduledDate);
     const dateKey = format(dayStart, "yyyy-MM-dd");
@@ -277,6 +337,10 @@ export function createApp(): Hono {
         timeSlot: data.timeSlot,
         status: "PENDING",
         internalNotes: `Nombre completo: ${data.fullName}`,
+        policyAcceptedAt: new Date(),
+        policyVersion,
+        marketingOptIn: data.marketingOptIn ?? false,
+        isAdult: data.isAdult ?? null,
       },
     });
 
@@ -308,39 +372,273 @@ export function createApp(): Hono {
     return c.json({ ok: true, id: session.id });
   });
 
-  app.post("/api/contact/beat-interest", async (c) => {
+  app.post("/api/contact/beat-interest", beatInterestLimit, async (c) => {
     let raw: unknown;
     try {
       raw = await c.req.json();
     } catch {
       return c.json({ success: false, error: "JSON inválido" }, 400);
     }
+    if (!hasAcceptedPolicy(raw)) {
+      return c.json({ success: false, error: POLICY_NOT_ACCEPTED_MESSAGE }, 400);
+    }
     const parsed = beatInterestSchema.safeParse(raw);
     if (!parsed.success) {
       return c.json({ success: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, 400);
     }
     const data = parsed.data;
+    await ensureShopSchema();
     const beat = await prisma.beat.findUnique({ where: { id: data.beatId } });
     if (!beat) {
       return c.json({ success: false, error: "Beat no encontrado" }, 400);
     }
     const phone = data.phone.replace(/\s/g, "");
     const ig = data.instagram?.replace(/^@/, "").trim();
+    const instagram = ig && ig.length > 0 ? ig : undefined;
+    const message = data.message?.trim() || undefined;
+    const licenseType = data.licenseType ?? (data.exclusiveIntent ? "EXCLUSIVE" : undefined);
+    const policyVersion = data.policyVersion ?? (await currentPolicyVersion());
+
+    const interest = await prisma.beatInterest.create({
+      data: {
+        beatId: beat.id,
+        beatTitle: beat.title,
+        artistName: data.artistName,
+        email: data.email,
+        phone,
+        instagram: instagram ?? null,
+        message: message ?? null,
+        exclusiveIntent: data.exclusiveIntent || licenseType === "EXCLUSIVE",
+        licenseType: licenseType ?? null,
+        policyAcceptedAt: new Date(),
+        policyVersion,
+        marketingOptIn: data.marketingOptIn ?? false,
+      },
+    });
+
+    const licensePrice =
+      licenseType === "MP3"
+        ? beat.priceMp3COP
+        : licenseType === "WAV"
+          ? beat.priceWavCOP
+          : licenseType === "STEMS"
+            ? beat.priceStemsCOP
+            : licenseType === "EXCLUSIVE"
+              ? beat.priceExclusiveCOP
+              : null;
     const r = await sendBeatInterestEmails({
       artistName: data.artistName,
-      email: data.email.trim().toLowerCase(),
+      email: data.email,
       phone,
-      instagram: ig && ig.length > 0 ? ig : undefined,
+      instagram,
       beatTitle: beat.title,
       beatGenre: beat.genre,
-      priceCOP: beat.priceCOP,
-      exclusiveIntent: data.exclusiveIntent,
-      message: data.message,
+      priceCOP: licensePrice ?? beat.priceCOP,
+      exclusiveIntent: interest.exclusiveIntent,
+      message,
     });
     if (!r.ok) {
-      return c.json({ success: false, error: r.error.message }, 500);
+      // El interés ya quedó guardado en el CRM; el correo es secundario.
+      console.warn("[beat-interest] correo no enviado:", r.error.message);
     }
-    return c.json({ success: true });
+    return c.json({ success: true, id: interest.id }, 201);
+  });
+
+  // ---------- Contacto y newsletter (público) ----------
+
+  app.post("/api/contact/messages", publicFormLimit, async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ ok: false, error: "JSON inválido" }, 400);
+    }
+    if (!hasAcceptedPolicy(raw)) {
+      return c.json({ ok: false, error: POLICY_NOT_ACCEPTED_MESSAGE }, 400);
+    }
+    const parsed = contactMessageSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, 400);
+    }
+    const d = parsed.data;
+    await ensureShopSchema();
+    const policyVersion = d.policyVersion ?? (await currentPolicyVersion());
+    const row = await prisma.contactMessage.create({
+      data: {
+        subject: d.subject,
+        name: d.name,
+        email: d.email,
+        phone: d.phone ?? null,
+        message: d.message,
+        policyAcceptedAt: new Date(),
+        policyVersion,
+        status: "NEW",
+      },
+    });
+    const mail = await sendContactMessageToAdmin({
+      subject: row.subject,
+      name: row.name,
+      email: row.email,
+      phone: row.phone,
+      message: row.message,
+    });
+    if (!mail.ok) {
+      console.warn("[contact] correo al admin no enviado:", mail.error.message);
+    }
+    return c.json({ ok: true, id: row.id }, 201);
+  });
+
+  app.post("/api/newsletter/subscribe", publicFormLimit, async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ ok: false, error: "JSON inválido" }, 400);
+    }
+    if (!hasAcceptedPolicy(raw)) {
+      return c.json({ ok: false, error: POLICY_NOT_ACCEPTED_MESSAGE }, 400);
+    }
+    const parsed = newsletterSubscribeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ ok: false, error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, 400);
+    }
+    const d = parsed.data;
+    await ensureShopSchema();
+    const policyVersion = d.policyVersion ?? (await currentPolicyVersion());
+    const existing = await prisma.subscriber.findUnique({ where: { email: d.email } });
+    // Siempre 201 { ok:true }: no se distingue nuevo/existente (no revela si el correo ya estaba).
+    let sendWelcome = false;
+    if (existing) {
+      await prisma.subscriber.update({
+        where: { email: d.email },
+        data: {
+          unsubscribedAt: null,
+          policyAcceptedAt: new Date(),
+          policyVersion,
+          ...(d.name ? { name: d.name } : {}),
+        },
+      });
+      sendWelcome = existing.unsubscribedAt !== null;
+    } else {
+      await prisma.subscriber.create({
+        data: {
+          email: d.email,
+          name: d.name ?? null,
+          source: d.source,
+          policyAcceptedAt: new Date(),
+          policyVersion,
+        },
+      });
+      sendWelcome = true;
+    }
+    if (sendWelcome && JWT_SECRET) {
+      const mail = await sendNewsletterWelcome({
+        email: d.email,
+        name: d.name ?? existing?.name ?? null,
+        unsubscribeUrl: unsubscribeUrl(apiBaseUrl(c), d.email, JWT_SECRET),
+      });
+      if (!mail.ok) {
+        console.warn("[newsletter] correo de bienvenida no enviado:", mail.error.message);
+      }
+    }
+    return c.json({ ok: true }, 201);
+  });
+
+  /** Da de baja si el token HMAC coincide. Devuelve true si se aplicó (no implica que el correo existiera). */
+  const unsubscribeIfValid = async (email: string, token: string | undefined): Promise<boolean> => {
+    if (!verifyUnsubscribeToken(email, token, JWT_SECRET)) {
+      return false;
+    }
+    await ensureShopSchema();
+    await prisma.subscriber.updateMany({
+      where: { email, unsubscribedAt: null },
+      data: { unsubscribedAt: new Date() },
+    });
+    return true;
+  };
+
+  app.post("/api/newsletter/unsubscribe", async (c) => {
+    let raw: unknown;
+    try {
+      raw = await c.req.json();
+    } catch {
+      return c.json({ ok: false, error: "JSON inválido" }, 400);
+    }
+    const parsed = newsletterUnsubscribeSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ ok: false, error: parsed.error.issues[0]?.message ?? "Email inválido" }, 400);
+    }
+    // Respuesta neutra: 200 siempre (no revela si el correo existe ni si el token era válido).
+    await unsubscribeIfValid(parsed.data.email, parsed.data.token);
+    return c.json({ ok: true }, 200);
+  });
+
+  /** Enlace de baja con un clic (correos): aplica la baja si el token coincide y redirige al frontend. */
+  app.get("/api/newsletter/unsubscribe", async (c) => {
+    const parsed = newsletterUnsubscribeSchema.safeParse({ email: c.req.query("email"), token: c.req.query("token") });
+    const applied = parsed.success ? await unsubscribeIfValid(parsed.data.email, parsed.data.token) : false;
+    const target = new URL("/legal/privacidad", `${frontendBaseUrl()}/`);
+    target.searchParams.set("baja", applied ? "ok" : "error");
+    c.header("Cache-Control", "no-store");
+    return c.redirect(target.toString(), 302);
+  });
+
+  // ---------- Canales de YouTube (público) ----------
+
+  app.get("/api/channels", async (c) => {
+    await ensureShopSchema();
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 24, max: 48 },
+    );
+    const q = searchTerm(c.req.query("q"));
+    const category = c.req.query("category");
+    const featuredOnly = c.req.query("featured") === "1";
+
+    const where: Prisma.YoutubeChannelWhereInput = { status: "ACTIVE" };
+    if (featuredOnly) {
+      where.featured = true;
+    }
+    if (category && category !== "Todos") {
+      where.category = category;
+    }
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+        { handle: { contains: q, mode: "insensitive" } },
+      ];
+    }
+
+    const [items, total, categoryRows] = await Promise.all([
+      prisma.youtubeChannel.findMany({
+        where,
+        orderBy: [{ featured: "desc" }, { sortOrder: "asc" }, { createdAt: "desc" }],
+        skip,
+        take: pageSize,
+      }),
+      prisma.youtubeChannel.count({ where }),
+      prisma.youtubeChannel.findMany({
+        where: { status: "ACTIVE" },
+        select: { category: true },
+        distinct: ["category"],
+        orderBy: { category: "asc" },
+      }),
+    ]);
+
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
+    return c.json({ items, total, page, pageSize, categories: categoryRows.map((r) => r.category) });
+  });
+
+  app.get("/api/channels/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    const channel = await prisma.youtubeChannel.findUnique({ where: { id } });
+    if (!channel || channel.status !== "ACTIVE") {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
+    return c.json(channel);
   });
 
   app.get("/api/productions", async (c) => {
@@ -348,8 +646,10 @@ export function createApp(): Hono {
     const year = c.req.query("year");
     const country = c.req.query("country");
     const featuredOnly = c.req.query("featured") === "1";
-    const page = Math.max(1, Number(c.req.query("page") ?? "1"));
-    const pageSize = Math.min(48, Math.max(1, Number(c.req.query("pageSize") ?? "12")));
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 12, max: 48 },
+    );
 
     const where: Prisma.ProductionWhereInput = {};
     if (featuredOnly) {
@@ -375,28 +675,33 @@ export function createApp(): Hono {
       prisma.production.findMany({
         where,
         orderBy: [{ year: "desc" }, { createdAt: "desc" }],
-        skip: (page - 1) * pageSize,
+        skip,
         take: pageSize,
       }),
       prisma.production.count({ where }),
     ]);
 
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json({ items, total, page, pageSize });
   });
 
   app.get("/api/productions/count", async (c) => {
     const total = await prisma.production.count();
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json({ total });
   });
 
   app.get("/api/beats", async (c) => {
+    await ensureShopSchema();
     const genre = c.req.query("genre");
     const mood = c.req.query("mood");
     const bpmMin = c.req.query("bpmMin");
     const bpmMax = c.req.query("bpmMax");
     const onlyAvailable = c.req.query("onlyAvailable") === "1";
-    const page = Math.max(1, Number(c.req.query("page") ?? "1"));
-    const pageSize = Math.min(48, Math.max(1, Number(c.req.query("pageSize") ?? "12")));
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 12, max: 48 },
+    );
 
     const where: Prisma.BeatWhereInput = {};
     if (genre && genre !== "Todos") {
@@ -422,17 +727,19 @@ export function createApp(): Hono {
       prisma.beat.findMany({
         where,
         orderBy: { createdAt: "desc" },
-        skip: (page - 1) * pageSize,
+        skip,
         take: pageSize,
       }),
       prisma.beat.count({ where }),
       prisma.beat.count({ where: { status: "AVAILABLE" } }),
     ]);
 
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json({ items, total, page, pageSize, availableCount });
   });
 
   app.get("/api/releases", async (c) => {
+    await ensureShopSchema();
     const genre = c.req.query("genre");
     const year = c.req.query("year");
     const featuredOnly = c.req.query("featured") === "1";
@@ -452,15 +759,18 @@ export function createApp(): Hono {
       where,
       orderBy: [{ releaseYear: "desc" }, { createdAt: "desc" }],
     });
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json({ items });
   });
 
   app.get("/api/releases/by-slug/:slug", async (c) => {
+    await ensureShopSchema();
     const slug = c.req.param("slug");
     const release = await prisma.release.findUnique({ where: { slug } });
     if (!release) {
       return c.json({ error: "No encontrado" }, 404);
     }
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json(release);
   });
 
@@ -486,6 +796,7 @@ export function createApp(): Hono {
     await ensureSiteConfigRow();
     const row = await prisma.siteConfig.findUnique({ where: { id: "default" } });
     const content = publishedContent(row);
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json({ content, publishedAt: row?.publishedAt ?? null });
   });
 
@@ -535,8 +846,10 @@ export function createApp(): Hono {
     await ensureShopSchema();
     const category = c.req.query("category");
     const featuredOnly = c.req.query("featured") === "1";
-    const page = Math.max(1, Math.floor(Number(c.req.query("page") ?? "1")) || 1);
-    const pageSize = Math.min(48, Math.max(1, Math.floor(Number(c.req.query("pageSize") ?? "24")) || 24));
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 24, max: 48 },
+    );
 
     const where: Prisma.ProductWhereInput = { status: { not: "DRAFT" } };
     if (category && category !== "Todos") {
@@ -550,7 +863,7 @@ export function createApp(): Hono {
       prisma.product.findMany({
         where,
         orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
-        skip: (page - 1) * pageSize,
+        skip,
         take: pageSize,
       }),
       prisma.product.count({ where }),
@@ -562,6 +875,7 @@ export function createApp(): Hono {
       }),
     ]);
 
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json({ items, total, page, pageSize, categories: categoryRows.map((r) => r.category) });
   });
 
@@ -572,6 +886,7 @@ export function createApp(): Hono {
     if (!product || product.status === "DRAFT") {
       return c.json({ error: "No encontrado" }, 404);
     }
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
     return c.json(product);
   });
 
@@ -599,6 +914,7 @@ export function createApp(): Hono {
     const now = new Date();
     const weekEnd = addDays(now, 7);
     const dayKeys14 = lastNDaysUtcDateKeys(14);
+    const since30d = subDays(now, 30);
 
     await ensureShopSchema();
     const [
@@ -609,6 +925,10 @@ export function createApp(): Hono {
       pageViewsTotal,
       sessionsByStatusRows,
       productsActive,
+      channelsActive,
+      messagesNew,
+      subscribersActive,
+      beatInterests30d,
     ] = await Promise.all([
       prisma.bookingSession.count({ where: { status: "PENDING" } }),
       prisma.bookingSession.count({
@@ -619,6 +939,10 @@ export function createApp(): Hono {
       prisma.pageView.count(),
       prisma.bookingSession.groupBy({ by: ["status"], _count: { _all: true } }),
       prisma.product.count({ where: { status: "ACTIVE" } }),
+      prisma.youtubeChannel.count({ where: { status: "ACTIVE" } }),
+      prisma.contactMessage.count({ where: { status: "NEW" } }),
+      prisma.subscriber.count({ where: { unsubscribedAt: null } }),
+      prisma.beatInterest.count({ where: { createdAt: { gte: since30d } } }),
     ]);
 
     let pageViewsByDay: { date: string; count: number }[] = [];
@@ -667,6 +991,10 @@ export function createApp(): Hono {
       beatsAvailable,
       productionsTotal,
       productsActive,
+      channelsActive,
+      messagesNew,
+      subscribersActive,
+      beatInterests30d,
       pageViewsTotal,
       pageViewsLast7Days,
       pageViewsByDay,
@@ -919,7 +1247,11 @@ export function createApp(): Hono {
       genre: z.string().min(1),
       bpm: z.number().int().optional().nullable(),
       mood: z.string().optional().nullable(),
-      priceCOP: z.number().int(),
+      priceCOP: z.number().int().min(0),
+      priceMp3COP: z.number().int().min(0).nullish(),
+      priceWavCOP: z.number().int().min(0).nullish(),
+      priceStemsCOP: z.number().int().min(0).nullish(),
+      priceExclusiveCOP: z.number().int().min(0).nullish(),
       status: z.enum(["AVAILABLE", "SOLD", "EXCLUSIVE"]),
       audioUrl: optionalMediaUrl,
       coverUrl: optionalMediaUrl,
@@ -947,7 +1279,11 @@ export function createApp(): Hono {
         genre: z.string().optional(),
         bpm: z.number().int().optional().nullable(),
         mood: z.string().optional().nullable(),
-        priceCOP: z.number().int().optional(),
+        priceCOP: z.number().int().min(0).optional(),
+        priceMp3COP: z.number().int().min(0).nullish(),
+        priceWavCOP: z.number().int().min(0).nullish(),
+        priceStemsCOP: z.number().int().min(0).nullish(),
+        priceExclusiveCOP: z.number().int().min(0).nullish(),
         status: z.enum(["AVAILABLE", "SOLD", "EXCLUSIVE"]).optional(),
         audioUrl: optionalMediaUrl,
         coverUrl: optionalMediaUrl,
@@ -983,6 +1319,12 @@ export function createApp(): Hono {
       coverUrl: optionalMediaUrl,
       spotifyUrl: optionalMediaUrl,
       youtubeUrl: optionalMediaUrl,
+      appleUrl: optionalMediaUrl,
+      deezerUrl: optionalMediaUrl,
+      amazonUrl: optionalMediaUrl,
+      tidalUrl: optionalMediaUrl,
+      soundcloudUrl: optionalMediaUrl,
+      releaseDate: optionalDate,
       description: z.string().optional().nullable(),
       featured: z.boolean().optional(),
       upcoming: z.boolean().optional(),
@@ -1019,6 +1361,12 @@ export function createApp(): Hono {
         coverUrl: optionalMediaUrl,
         spotifyUrl: optionalMediaUrl,
         youtubeUrl: optionalMediaUrl,
+        appleUrl: optionalMediaUrl,
+        deezerUrl: optionalMediaUrl,
+        amazonUrl: optionalMediaUrl,
+        tidalUrl: optionalMediaUrl,
+        soundcloudUrl: optionalMediaUrl,
+        releaseDate: optionalDate,
         description: z.string().optional().nullable(),
         featured: z.boolean().optional(),
         upcoming: z.boolean().optional(),
@@ -1391,6 +1739,245 @@ export function createApp(): Hono {
     return c.json({ url });
   });
 
+  // ---------- Canales de YouTube (admin) ----------
+
+  admin.get("/channels", async (c) => {
+    await ensureShopSchema();
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 50, max: 200 },
+    );
+    const q = searchTerm(c.req.query("q"));
+    const status = c.req.query("status");
+    const where: Prisma.YoutubeChannelWhereInput = {};
+    if (status && status !== "Todos") {
+      where.status = status;
+    }
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { description: { contains: q, mode: "insensitive" } },
+        { handle: { contains: q, mode: "insensitive" } },
+        { url: { contains: q, mode: "insensitive" } },
+      ];
+    }
+    const [items, total] = await Promise.all([
+      prisma.youtubeChannel.findMany({
+        where,
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+        skip,
+        take: pageSize,
+      }),
+      prisma.youtubeChannel.count({ where }),
+    ]);
+    return c.json({ items, total, page, pageSize });
+  });
+
+  admin.post("/channels", async (c) => {
+    await ensureShopSchema();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = channelCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const d = parsed.data;
+    const detected = parseYoutubeChannelUrl(d.url);
+    const row = await prisma.youtubeChannel.create({
+      data: {
+        name: d.name,
+        url: d.url,
+        channelId: d.channelId ?? detected.channelId,
+        handle: d.handle ?? detected.handle,
+        description: d.description,
+        avatarUrl: d.avatarUrl ?? null,
+        featuredVideoUrl: d.featuredVideoUrl ?? null,
+        category: d.category,
+        featured: d.featured,
+        status: d.status,
+        sortOrder: d.sortOrder,
+      },
+    });
+    return c.json(row, 201);
+  });
+
+  /** Debe ir antes de PATCH/DELETE /channels/:id para que "reorder" no se interprete como id. */
+  admin.post("/channels/reorder", async (c) => {
+    await ensureShopSchema();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = channelReorderSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, 400);
+    }
+    const ids = [...new Set(parsed.data.ids)];
+    await prisma.$transaction(
+      ids.map((id, index) => prisma.youtubeChannel.updateMany({ where: { id }, data: { sortOrder: index } })),
+    );
+    return c.json({ ok: true, count: ids.length });
+  });
+
+  admin.patch("/channels/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = channelUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const existing = await prisma.youtubeChannel.findUnique({ where: { id } });
+    if (!existing) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    const d = parsed.data;
+    const data: Prisma.YoutubeChannelUpdateInput = {};
+    if (d.name !== undefined) data.name = d.name;
+    if (d.url !== undefined) {
+      data.url = d.url;
+      // Si cambia la URL y no mandan channelId/handle, se vuelven a detectar.
+      const detected = parseYoutubeChannelUrl(d.url);
+      if (d.channelId === undefined && detected.channelId) data.channelId = detected.channelId;
+      if (d.handle === undefined && detected.handle) data.handle = detected.handle;
+    }
+    if (d.channelId !== undefined) data.channelId = d.channelId;
+    if (d.handle !== undefined) data.handle = d.handle;
+    if (d.description !== undefined) data.description = d.description;
+    if (d.avatarUrl !== undefined) data.avatarUrl = d.avatarUrl;
+    if (d.featuredVideoUrl !== undefined) data.featuredVideoUrl = d.featuredVideoUrl;
+    if (d.category !== undefined) data.category = d.category;
+    if (d.featured !== undefined) data.featured = d.featured;
+    if (d.status !== undefined) data.status = d.status;
+    if (d.sortOrder !== undefined) data.sortOrder = d.sortOrder;
+    const updated = await prisma.youtubeChannel.update({ where: { id }, data });
+    return c.json(updated);
+  });
+
+  admin.delete("/channels/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    const deleted = await prisma.youtubeChannel.deleteMany({ where: { id } });
+    if (deleted.count === 0) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    return c.json({ ok: true });
+  });
+
+  // ---------- CRM: intereses en beats, mensajes, suscriptores (admin) ----------
+
+  admin.get("/beat-interests", async (c) => {
+    await ensureShopSchema();
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 25, max: 100 },
+    );
+    const q = searchTerm(c.req.query("q"));
+    const where: Prisma.BeatInterestWhereInput = {};
+    if (q) {
+      where.OR = [
+        { artistName: { contains: q, mode: "insensitive" } },
+        { email: { contains: q, mode: "insensitive" } },
+        { beatTitle: { contains: q, mode: "insensitive" } },
+        { instagram: { contains: q, mode: "insensitive" } },
+      ];
+    }
+    const [items, total] = await Promise.all([
+      prisma.beatInterest.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: pageSize }),
+      prisma.beatInterest.count({ where }),
+    ]);
+    return c.json({ items, total, page, pageSize });
+  });
+
+  admin.get("/messages", async (c) => {
+    await ensureShopSchema();
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 25, max: 100 },
+    );
+    const status = c.req.query("status");
+    const where: Prisma.ContactMessageWhereInput = {};
+    if (status && status !== "Todos") {
+      where.status = status;
+    }
+    const [items, total] = await Promise.all([
+      prisma.contactMessage.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: pageSize }),
+      prisma.contactMessage.count({ where }),
+    ]);
+    return c.json({ items, total, page, pageSize });
+  });
+
+  admin.patch("/messages/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = contactStatusSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, 400);
+    }
+    const existing = await prisma.contactMessage.findUnique({ where: { id } });
+    if (!existing) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    const updated = await prisma.contactMessage.update({ where: { id }, data: { status: parsed.data.status } });
+    return c.json(updated);
+  });
+
+  admin.get("/subscribers", async (c) => {
+    await ensureShopSchema();
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 50, max: 200 },
+    );
+    const q = searchTerm(c.req.query("q"));
+    const where: Prisma.SubscriberWhereInput = {};
+    if (q) {
+      where.OR = [
+        { email: { contains: q, mode: "insensitive" } },
+        { name: { contains: q, mode: "insensitive" } },
+      ];
+    }
+    const [items, total] = await Promise.all([
+      prisma.subscriber.findMany({ where, orderBy: { createdAt: "desc" }, skip, take: pageSize }),
+      prisma.subscriber.count({ where }),
+    ]);
+    return c.json({ items, total, page, pageSize });
+  });
+
+  admin.get("/subscribers/export", async () => {
+    await ensureShopSchema();
+    const rows = await prisma.subscriber.findMany({ orderBy: { createdAt: "desc" } });
+    const header = ["email", "name", "source", "policyVersion", "policyAcceptedAt", "unsubscribedAt", "createdAt"];
+    const lines = rows.map((s) =>
+      [s.email, s.name, s.source, s.policyVersion, s.policyAcceptedAt, s.unsubscribedAt, s.createdAt]
+        .map(csvCell)
+        .join(","),
+    );
+    const csv = [header.join(","), ...lines].join("\n");
+    return new Response(csv, {
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": 'attachment; filename="suscriptores.csv"',
+      },
+    });
+  });
+
   admin.get("/sessions/export.csv", async () => {
     const sessions = await prisma.bookingSession.findMany({ orderBy: { scheduledDate: "desc" } });
     const header = [
@@ -1414,7 +2001,7 @@ export function createApp(): Hono {
         s.artistEmail,
         s.artistPhone,
       ]
-        .map((cell) => `"${String(cell).replace(/"/g, '""')}"`)
+        .map(csvCell)
         .join(","),
     );
     const csv = [header.join(","), ...lines].join("\n");
