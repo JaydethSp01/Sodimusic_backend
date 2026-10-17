@@ -28,6 +28,7 @@ async function main(): Promise<void> {
       {
         name: "Camiseta Sodimusic negra",
         slug: "camiseta-sodimusic-negra",
+        images: ["https://images.unsplash.com/photo-1583743814966-8936f5b7be1a?q=80&w=1200&auto=format&fit=crop"],
         description: "Camiseta negra 100% algodón con el logo de Sodimusic al frente.",
         priceCOP: 65_000,
         category: "Camisetas",
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
       {
         name: "Gorra XMEN",
         slug: "gorra-xmen",
+        images: ["https://images.unsplash.com/photo-1588850561407-ed78c282e89b?q=80&w=1200&auto=format&fit=crop"],
         description: "Gorra snapback bordada XMEN · Sodimusic.",
         priceCOP: 45_000,
         category: "Gorras",
@@ -49,6 +51,7 @@ async function main(): Promise<void> {
       {
         name: "Hoodie Champeta Roots",
         slug: "hoodie-champeta-roots",
+        images: ["https://images.unsplash.com/photo-1556821840-3a63f95609a7?q=80&w=1200&auto=format&fit=crop"],
         description: "Hoodie oversize edición Champeta Roots, interior afelpado.",
         priceCOP: 120_000,
         compareAtCOP: 140_000,
@@ -75,6 +78,7 @@ async function main(): Promise<void> {
   const productions = [
     {
       title: "Paisita (Sodimusic) x J Col El Crazy",
+      coverUrl: "https://i.ytimg.com/vi/e60j4DF8xe8/hqdefault.jpg",
       artistName: "J Col, El Crazy",
       artistCity: "Medellín",
       artistCountry: "Colombia",
@@ -85,6 +89,7 @@ async function main(): Promise<void> {
     },
     {
       title: "GANAS SODIMUSIC LA (VIDEO OFICIAL)",
+      coverUrl: "https://i.ytimg.com/vi/kbQup1zxpGw/hqdefault.jpg",
       artistName: "Sodimusic",
       artistCity: "Medellín",
       artistCountry: "Colombia",
@@ -95,6 +100,7 @@ async function main(): Promise<void> {
     },
     {
       title: "Fuego lento",
+      coverUrl: "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1200&auto=format&fit=crop",
       artistName: "El Rasta",
       artistCity: "Medellín",
       artistCountry: "Colombia",
@@ -104,6 +110,7 @@ async function main(): Promise<void> {
     },
     {
       title: "Vibra caribe",
+      coverUrl: "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?q=80&w=1200&auto=format&fit=crop",
       artistName: "Grupo Xpress",
       artistCity: "Barranquilla",
       artistCountry: "Colombia",
@@ -113,6 +120,7 @@ async function main(): Promise<void> {
     },
     {
       title: "Pa' que bailes",
+      coverUrl: "https://images.unsplash.com/photo-1493225457124-a3eb161ffa5f?q=80&w=1200&auto=format&fit=crop",
       artistName: "DJ Primo",
       artistCity: "Ciudad de México",
       artistCountry: "México",
@@ -122,6 +130,7 @@ async function main(): Promise<void> {
     },
     {
       title: "En la cima",
+      coverUrl: "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?q=80&w=1200&auto=format&fit=crop",
       artistName: "Young KB",
       artistCity: "María La Baja",
       artistCountry: "Colombia",
@@ -138,6 +147,7 @@ async function main(): Promise<void> {
   const beats = [
     {
       title: "María La Baja Type Beat",
+      coverUrl: "https://images.unsplash.com/photo-1487180144351-b8472da7d491?q=80&w=1200&auto=format&fit=crop",
       genre: "Afrobeat",
       bpm: 98,
       mood: "Nostálgico",
@@ -146,6 +156,7 @@ async function main(): Promise<void> {
     },
     {
       title: "Montes de María Riddim",
+      coverUrl: "https://images.unsplash.com/photo-1516280440614-37939bbacd81?q=80&w=1200&auto=format&fit=crop",
       genre: "Dancehall",
       bpm: 90,
       mood: "Festivo",
@@ -154,6 +165,7 @@ async function main(): Promise<void> {
     },
     {
       title: "Caribe Trap 01",
+      coverUrl: "https://images.unsplash.com/photo-1571330735066-03aaa9429d89?q=80&w=1200&auto=format&fit=crop",
       genre: "Trap",
       bpm: 140,
       mood: "Oscuro",
@@ -162,6 +174,7 @@ async function main(): Promise<void> {
     },
     {
       title: "Palenque Groove",
+      coverUrl: "https://images.unsplash.com/photo-1619983081563-430f63602796?q=80&w=1200&auto=format&fit=crop",
       genre: "Afrobeat",
       bpm: 105,
       mood: "Energético",
@@ -179,6 +192,7 @@ async function main(): Promise<void> {
       {
         title: "Ganas",
         slug: "ganas",
+        coverUrl: "https://i.ytimg.com/vi/kbQup1zxpGw/hqdefault.jpg",
         artistName: "JeiVy LaZy",
         genre: "Reggaeton",
         releaseYear: 2024,
@@ -189,6 +203,7 @@ async function main(): Promise<void> {
       {
         title: "En la oscuridad",
         slug: "en-la-oscuridad",
+        coverUrl: "https://images.unsplash.com/photo-1508700115892-45ecd05ae2ad?q=80&w=1200&auto=format&fit=crop",
         artistName: "JeiVy LaZy ft. El Rasta",
         genre: "Trap",
         releaseYear: 2023,
@@ -199,6 +214,7 @@ async function main(): Promise<void> {
       {
         title: "Proyecto Montes 2026",
         slug: "proyecto-montes-2026",
+        coverUrl: "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?q=80&w=1200&auto=format&fit=crop",
         artistName: "JeiVy LaZy · XMEN",
         genre: "Trap",
         releaseYear: 2026,
@@ -211,6 +227,7 @@ async function main(): Promise<void> {
       {
         title: "Lo que viene (single)",
         slug: "lo-que-viene-single",
+        coverUrl: "https://images.unsplash.com/photo-1520523839897-bd0b52f945a0?q=80&w=1200&auto=format&fit=crop",
         artistName: "Sodimusic",
         genre: "Afrobeat",
         releaseYear: 2026,
