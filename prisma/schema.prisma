@@ -268,3 +268,45 @@ model Subscriber {
   unsubscribedAt   DateTime?
   createdAt        DateTime  @default(now())
 }
+
+/// Fuente del feed social "Novedades" (canal de YouTube, página de Facebook o búsqueda en YouTube)
+model SocialSource {
+  id            String    @id @default(cuid())
+  /// YOUTUBE_CHANNEL | FACEBOOK_PAGE | YOUTUBE_SEARCH
+  kind          String
+  label         String
+  /// UC… | id o username de la página | texto de búsqueda
+  externalId    String
+  url           String?
+  enabled       Boolean   @default(true)
+  lastFetchedAt DateTime?
+  lastError     String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  @@unique([kind, externalId])
+}
+
+/// Publicación del feed social (video de YouTube, post de Facebook o enlace manual)
+model SocialPost {
+  id          String   @id @default(cuid())
+  sourceId    String?
+  /// YOUTUBE_VIDEO | FACEBOOK_POST | LINK
+  kind        String
+  /// yt:<videoId> | fb:<postId> | link:<sha1(url)>
+  externalId  String   @unique
+  title       String
+  text        String?
+  url         String
+  imageUrl    String?
+  author      String?
+  publishedAt DateTime
+  /// VISIBLE | HIDDEN
+  status      String   @default("VISIBLE")
+  pinned      Boolean  @default(false)
+  raw         Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, pinned, publishedAt])
+}

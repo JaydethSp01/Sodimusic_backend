@@ -41,6 +41,19 @@ import { slugify, uniqueSlug } from "./lib/slugify.js";
 import { productCreateSchema, productUpdateSchema } from "./schemas/product.js";
 import { isSlotScope, monthDateKeyRange, parseDateKey, type BlockScope } from "./lib/blocked-dates.js";
 import {
+  facebookPageFromUrl,
+  socialFeedKindSchema,
+  socialPostCreateSchema,
+  socialPostUpdateSchema,
+  socialPostsQuerySchema,
+  socialSourceCreateSchema,
+  socialSourceUpdateSchema,
+} from "./schemas/social.js";
+import { ensureSocialSources, getSocialSyncAt, refreshSocialIfStale, syncSocial } from "./lib/social/sync.js";
+import { resolveChannelId } from "./lib/social/youtube.js";
+import { resolveLink } from "./lib/social/resolve-link.js";
+import { errorMessage } from "./lib/social/http.js";
+import {
   DEFAULT_CALENDAR_TIMEZONE,
   eachDateKeyInClosedRange,
   instantToCalendarDateKey,
@@ -68,6 +81,24 @@ function normalizePublicPath(raw: unknown): string {
  * Solo `/uploads/:name` (contenido inmutable por nombre) lleva `immutable`.
  */
 export const PUBLIC_CACHE_CONTROL = "public, max-age=0, s-maxage=0, must-revalidate";
+
+/** Campos de `SocialPost` expuestos por la API (sin `raw`). */
+const SOCIAL_POST_PUBLIC_SELECT = {
+  id: true,
+  sourceId: true,
+  kind: true,
+  externalId: true,
+  title: true,
+  text: true,
+  url: true,
+  imageUrl: true,
+  author: true,
+  publishedAt: true,
+  status: true,
+  pinned: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 /** Base pública de esta API para enlaces en correos: API_URL, o el origen de la petición (proxy-aware). */
 function apiBaseUrl(c: { req: { url: string; header(name: string): string | undefined } }): string {
@@ -890,6 +921,47 @@ export function createApp(): Hono {
     return c.json(product);
   });
 
+  // ---------- Novedades (feed social, público) ----------
+
+  app.get("/api/social/feed", async (c) => {
+    await ensureShopSchema();
+    const limitRaw = Number(c.req.query("limit") ?? "12");
+    const limit = Number.isFinite(limitRaw) && limitRaw >= 1 ? Math.min(48, Math.floor(limitRaw)) : 12;
+    const kindRaw = c.req.query("kind");
+    const kindParsed = kindRaw ? socialFeedKindSchema.safeParse(kindRaw) : null;
+    if (kindParsed && !kindParsed.success) {
+      return c.json({ error: "kind inválido" }, 400);
+    }
+    // Refresco perezoso (presupuesto 6 s): nunca falla la respuesta por errores de sincronización.
+    await refreshSocialIfStale({ budgetMs: 6_000 });
+    const [items, updatedAt] = await Promise.all([
+      prisma.socialPost.findMany({
+        where: { status: "VISIBLE", ...(kindParsed?.success ? { kind: kindParsed.data } : {}) },
+        orderBy: [{ pinned: "desc" }, { publishedAt: "desc" }],
+        take: limit,
+        select: SOCIAL_POST_PUBLIC_SELECT,
+      }),
+      getSocialSyncAt().catch(() => null),
+    ]);
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
+    return c.json({ items, updatedAt: updatedAt ? updatedAt.toISOString() : null });
+  });
+
+  /** Cron diario (vercel.json). Vercel envía `Authorization: Bearer ${CRON_SECRET}`. */
+  app.get("/api/cron/social-sync", async (c) => {
+    const secret = process.env["CRON_SECRET"]?.trim();
+    if (!secret) {
+      return c.json({ error: "CRON_SECRET no configurado" }, 503);
+    }
+    const h = c.req.header("Authorization") ?? "";
+    if (h !== `Bearer ${secret}`) {
+      return c.json({ error: "No autorizado" }, 401);
+    }
+    await ensureShopSchema();
+    const summary = await syncSocial({ force: true, budgetMs: 25_000 });
+    return c.json(summary);
+  });
+
   const admin = new Hono<{ Variables: AdminVars }>();
   admin.use("*", requireAdmin);
 
@@ -929,6 +1001,8 @@ export function createApp(): Hono {
       messagesNew,
       subscribersActive,
       beatInterests30d,
+      socialPostsVisible,
+      socialLastSyncAt,
     ] = await Promise.all([
       prisma.bookingSession.count({ where: { status: "PENDING" } }),
       prisma.bookingSession.count({
@@ -943,6 +1017,8 @@ export function createApp(): Hono {
       prisma.contactMessage.count({ where: { status: "NEW" } }),
       prisma.subscriber.count({ where: { unsubscribedAt: null } }),
       prisma.beatInterest.count({ where: { createdAt: { gte: since30d } } }),
+      prisma.socialPost.count({ where: { status: "VISIBLE" } }),
+      getSocialSyncAt().catch(() => null),
     ]);
 
     let pageViewsByDay: { date: string; count: number }[] = [];
@@ -995,6 +1071,8 @@ export function createApp(): Hono {
       messagesNew,
       subscribersActive,
       beatInterests30d,
+      socialPostsVisible,
+      socialLastSyncAt: socialLastSyncAt ? socialLastSyncAt.toISOString() : null,
       pageViewsTotal,
       pageViewsLast7Days,
       pageViewsByDay,
@@ -2011,6 +2089,252 @@ export function createApp(): Hono {
         "Content-Disposition": 'attachment; filename="sesiones.csv"',
       },
     });
+  });
+
+  // ---------- Novedades (feed social, admin) ----------
+
+  admin.get("/social/status", async (c) => {
+    await ensureShopSchema();
+    const [lastSyncAt, sources, posts, hidden] = await Promise.all([
+      getSocialSyncAt(),
+      prisma.socialSource.count(),
+      prisma.socialPost.count(),
+      prisma.socialPost.count({ where: { status: "HIDDEN" } }),
+    ]);
+    return c.json({
+      lastSyncAt: lastSyncAt ? lastSyncAt.toISOString() : null,
+      env: {
+        youtubeApiKey: Boolean(process.env["YOUTUBE_API_KEY"]?.trim()),
+        facebookPageToken: Boolean(process.env["FACEBOOK_PAGE_TOKEN"]?.trim()),
+        cronSecret: Boolean(process.env["CRON_SECRET"]?.trim()),
+      },
+      counts: { sources, posts, hidden },
+    });
+  });
+
+  admin.get("/social/sources", async (c) => {
+    await ensureShopSchema();
+    try {
+      await ensureSocialSources();
+    } catch (err) {
+      console.warn("[social] no se pudieron sembrar las fuentes", err);
+    }
+    const items = await prisma.socialSource.findMany({ orderBy: [{ kind: "asc" }, { createdAt: "asc" }] });
+    return c.json({ items });
+  });
+
+  admin.post("/social/sources", async (c) => {
+    await ensureShopSchema();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = socialSourceCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const d = parsed.data;
+    let externalId: string;
+    let label: string | null = d.label;
+    let url: string | null = d.url ?? null;
+    if (d.kind === "YOUTUBE_CHANNEL") {
+      const input = d.url ?? d.externalId ?? "";
+      let resolved: Awaited<ReturnType<typeof resolveChannelId>> = null;
+      try {
+        resolved = await resolveChannelId(input);
+      } catch (err) {
+        return c.json({ error: `No se pudo resolver el canal de YouTube (${errorMessage(err)})` }, 400);
+      }
+      if (!resolved) {
+        return c.json({ error: "No se pudo resolver el canal de YouTube (usa /channel/UC…, /@handle o /c/nombre)" }, 400);
+      }
+      externalId = resolved.channelId;
+      url = d.url ?? resolved.url;
+      label = label ?? resolved.name ?? externalId;
+    } else if (d.kind === "FACEBOOK_PAGE") {
+      const page = facebookPageFromUrl(d.externalId ?? d.url ?? "");
+      if (!page) {
+        return c.json({ error: "Página de Facebook inválida (usa el username o la URL de la página)" }, 400);
+      }
+      externalId = page;
+      url = url ?? `https://www.facebook.com/${page}`;
+      label = label ?? `Facebook ${page}`;
+    } else {
+      externalId = (d.externalId ?? "").trim();
+      label = label ?? `Menciones en YouTube: ${externalId}`;
+    }
+    const existing = await prisma.socialSource.findUnique({ where: { kind_externalId: { kind: d.kind, externalId } } });
+    if (existing) {
+      return c.json({ error: "Esa fuente ya existe", id: existing.id }, 409);
+    }
+    const row = await prisma.socialSource.create({ data: { kind: d.kind, externalId, label: label ?? externalId, url } });
+    return c.json(row, 201);
+  });
+
+  admin.patch("/social/sources/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = socialSourceUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const existing = await prisma.socialSource.findUnique({ where: { id } });
+    if (!existing) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    const d = parsed.data;
+    const data: Prisma.SocialSourceUpdateInput = {};
+    if (d.label !== undefined) data.label = d.label;
+    if (d.enabled !== undefined) data.enabled = d.enabled;
+    const updated = await prisma.socialSource.update({ where: { id }, data });
+    return c.json(updated);
+  });
+
+  admin.delete("/social/sources/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    const existing = await prisma.socialSource.findUnique({ where: { id } });
+    if (!existing) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    // Las publicaciones se conservan (sourceId = null).
+    await prisma.$transaction([
+      prisma.socialPost.updateMany({ where: { sourceId: id }, data: { sourceId: null } }),
+      prisma.socialSource.delete({ where: { id } }),
+    ]);
+    return c.json({ ok: true });
+  });
+
+  admin.get("/social/posts", async (c) => {
+    await ensureShopSchema();
+    const { page, pageSize, skip } = pagination(c.req.query(), { pageSize: 24, max: 100 });
+    const statusParsed = socialPostsQuerySchema.safeParse({ status: c.req.query("status") ?? "VISIBLE" });
+    if (!statusParsed.success) {
+      return c.json({ error: "status inválido" }, 400);
+    }
+    const status = statusParsed.data.status;
+    const q = searchTerm(c.req.query("q"));
+    const where: Prisma.SocialPostWhereInput = {
+      ...(status === "ALL" ? {} : { status }),
+      ...(q
+        ? {
+            OR: [
+              { title: { contains: q, mode: "insensitive" } },
+              { text: { contains: q, mode: "insensitive" } },
+              { author: { contains: q, mode: "insensitive" } },
+              { url: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    };
+    const [items, total] = await Promise.all([
+      prisma.socialPost.findMany({
+        where,
+        orderBy: [{ pinned: "desc" }, { publishedAt: "desc" }],
+        skip,
+        take: pageSize,
+        select: SOCIAL_POST_PUBLIC_SELECT,
+      }),
+      prisma.socialPost.count({ where }),
+    ]);
+    return c.json({ items, total, page, pageSize });
+  });
+
+  admin.post("/social/posts", async (c) => {
+    await ensureShopSchema();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = socialPostCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const d = parsed.data;
+    let resolved: Awaited<ReturnType<typeof resolveLink>>;
+    try {
+      resolved = await resolveLink(d.url);
+    } catch {
+      return c.json({ error: "URL inválida" }, 400);
+    }
+    const existing = await prisma.socialPost.findUnique({ where: { externalId: resolved.externalId }, select: SOCIAL_POST_PUBLIC_SELECT });
+    if (existing) {
+      return c.json(existing, 200);
+    }
+    const title = d.title ?? resolved.title;
+    if (!title) {
+      return c.json({ error: "No se pudieron obtener metadatos de la URL; indica un título" }, 400);
+    }
+    const row = await prisma.socialPost.create({
+      data: {
+        sourceId: null,
+        kind: resolved.kind,
+        externalId: resolved.externalId,
+        title,
+        text: d.text ?? resolved.text,
+        url: resolved.url,
+        imageUrl: d.imageUrl ?? resolved.imageUrl,
+        author: d.author ?? resolved.author,
+        publishedAt: d.publishedAt ?? resolved.publishedAt ?? new Date(),
+        raw: resolved.raw as object,
+      },
+      select: SOCIAL_POST_PUBLIC_SELECT,
+    });
+    return c.json(row, 201);
+  });
+
+  admin.patch("/social/posts/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = socialPostUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const existing = await prisma.socialPost.findUnique({ where: { id }, select: { id: true } });
+    if (!existing) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    const d = parsed.data;
+    const data: Prisma.SocialPostUpdateInput = {};
+    if (d.status !== undefined) data.status = d.status;
+    if (d.pinned !== undefined) data.pinned = d.pinned;
+    if (d.title !== undefined) data.title = d.title;
+    if (d.text !== undefined) data.text = d.text;
+    if (d.imageUrl !== undefined) data.imageUrl = d.imageUrl;
+    const updated = await prisma.socialPost.update({ where: { id }, data, select: SOCIAL_POST_PUBLIC_SELECT });
+    return c.json(updated);
+  });
+
+  admin.delete("/social/posts/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    const deleted = await prisma.socialPost.deleteMany({ where: { id } });
+    if (deleted.count === 0) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    return c.json({ ok: true });
+  });
+
+  admin.post("/social/sync", async (c) => {
+    await ensureShopSchema();
+    const summary = await syncSocial({ force: true, budgetMs: 25_000 });
+    return c.json(summary);
   });
 
   app.route("/api/admin", admin);

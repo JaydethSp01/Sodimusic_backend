@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { publishedContent } from "./site-config-db.js";
+import { ensureSocialSources } from "./social/sync.js";
 
 /** Clave en AppMeta que marca que `youtube.channels` del SiteConfig ya se migró a YoutubeChannel. */
 export const CHANNELS_MIGRATED_KEY = "youtubeChannelsMigratedAt";
@@ -11,7 +12,7 @@ function alterIfExists(table: string, alter: string): string {
 }
 
 /**
- * SQL idempotente equivalente a las migraciones `products_and_media`, `v3_legal_channels_crm` y `app_meta`.
+ * SQL idempotente equivalente a las migraciones `products_and_media`, `v3_legal_channels_crm`, `app_meta` y `social_feed`.
  * El build de Vercel puede no alcanzar la BD (IPv6/pooler), así que las tablas y columnas
  * nuevas se garantizan también en runtime antes de usarlas. En una BD vacía no lanza.
  */
@@ -139,12 +140,56 @@ export const SHOP_SCHEMA_SQL: readonly string[] = [
     "updatedAt" TIMESTAMP(3) NOT NULL,
     CONSTRAINT "AppMeta_pkey" PRIMARY KEY ("key")
   )`,
+
+  // ---- feed social "Novedades" (migración social_feed) ----
+  `CREATE TABLE IF NOT EXISTS "SocialSource" (
+    "id" TEXT NOT NULL,
+    "kind" TEXT NOT NULL,
+    "label" TEXT NOT NULL,
+    "externalId" TEXT NOT NULL,
+    "url" TEXT,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "lastFetchedAt" TIMESTAMP(3),
+    "lastError" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "SocialSource_pkey" PRIMARY KEY ("id")
+  )`,
+  `CREATE TABLE IF NOT EXISTS "SocialPost" (
+    "id" TEXT NOT NULL,
+    "sourceId" TEXT,
+    "kind" TEXT NOT NULL,
+    "externalId" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "text" TEXT,
+    "url" TEXT NOT NULL,
+    "imageUrl" TEXT,
+    "author" TEXT,
+    "publishedAt" TIMESTAMP(3) NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'VISIBLE',
+    "pinned" BOOLEAN NOT NULL DEFAULT false,
+    "raw" JSONB,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "SocialPost_pkey" PRIMARY KEY ("id")
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "SocialSource_kind_externalId_key" ON "SocialSource"("kind", "externalId")`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "SocialPost_externalId_key" ON "SocialPost"("externalId")`,
+  `CREATE INDEX IF NOT EXISTS "SocialPost_status_pinned_publishedAt_idx" ON "SocialPost"("status", "pinned", "publishedAt")`,
 ];
 
 /** Ejecuta el SQL idempotente de tienda/media/v3/AppMeta contra `client`. No lanza en una BD vacía. */
 export async function applyShopSchema(client: PrismaClient = prisma): Promise<void> {
   for (const sql of SHOP_SCHEMA_SQL) {
-    await client.$executeRawUnsafe(sql);
+    try {
+      await client.$executeRawUnsafe(sql);
+    } catch (err) {
+      // Dos instancias (o dos ficheros de test) ejecutando `CREATE … IF NOT EXISTS` a la vez pueden chocar
+      // en pg_type/pg_class ("duplicate key" / "already exists"): el objeto ya existe, seguimos.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/already exists|duplicate key|pg_type_typname_nsp_index|pg_class_relname_nsp_index/i.test(msg)) continue;
+      throw err;
+    }
   }
 }
 
@@ -222,9 +267,9 @@ export async function migrateChannelsFromSiteConfig(client: PrismaClient = prism
 let shopSchemaReady: Promise<void> | null = null;
 
 /**
- * Garantiza (una vez por instancia) que existen las tablas de tienda, media, canales, CRM y AppMeta,
+ * Garantiza (una vez por instancia) que existen las tablas de tienda, media, canales, CRM, AppMeta y feed social,
  * y las columnas v3 de Beat/Release/BookingSession; después migra los canales del SiteConfig
- * si aún no se hizo (flag en AppMeta).
+ * si aún no se hizo y siembra las fuentes del feed social (flags en AppMeta).
  * Si falla, se descarta la promesa memoizada para reintentar en la siguiente petición
  * y el error se propaga al `onError` de Hono.
  */
@@ -240,6 +285,15 @@ export function ensureShopSchema(): Promise<void> {
       } catch (err) {
         // No bloquea el arranque: los canales se pueden crear desde el admin.
         console.warn("[schema] no se pudieron migrar los canales del SiteConfig", err);
+      }
+      try {
+        const seeded = await ensureSocialSources(prisma);
+        if (seeded > 0) {
+          console.log(`[schema] ${seeded} fuente(s) del feed social sembradas`);
+        }
+      } catch (err) {
+        // No bloquea el arranque: las fuentes se pueden crear desde el admin o en la sincronización.
+        console.warn("[schema] no se pudieron sembrar las fuentes del feed social", err);
       }
     })().catch((err: unknown) => {
       shopSchemaReady = null;

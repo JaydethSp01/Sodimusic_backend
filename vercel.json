@@ -2,5 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "hono",
   "installCommand": "npm install --include=dev",
-  "buildCommand": "npm run db:generate && npm run db:deploy && npm run build"
+  "buildCommand": "npm run db:generate && npm run db:deploy && npm run build",
+  "crons": [
+    {
+      "path": "/api/cron/social-sync",
+      "schedule": "0 11 * * *"
+    }
+  ]
 }
