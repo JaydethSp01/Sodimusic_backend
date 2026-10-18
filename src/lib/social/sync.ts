@@ -119,9 +119,15 @@ async function fetchForSource(source: SocialSource, env: Env, signal: AbortSigna
           if (ids.length === 0) return new Set();
           const rows = await client.socialPost.findMany({
             where: { externalId: { in: ids.map(ytExternalId) } },
-            select: { externalId: true },
+            select: { externalId: true, raw: true },
           });
-          return new Set(rows.map((r) => r.externalId.slice(3)));
+          // Solo cuentan como "conocidos" los que ya tienen fecha exacta: los aproximados
+          // (`raw.publishedAtApprox`) se vuelven a consultar en `watch?v=` para afinarlos.
+          return new Set(
+            rows
+              .filter((r) => !(r.raw && typeof r.raw === "object" && (r.raw as { publishedAtApprox?: unknown }).publishedAtApprox === true))
+              .map((r) => r.externalId.slice(3)),
+          );
         },
       });
     case "FACEBOOK_PAGE": {
@@ -144,7 +150,7 @@ const sameInstant = (a: Date, b: Date): boolean => Math.abs(a.getTime() - b.getT
  */
 export async function upsertSocialPost(client: Client, sourceId: string | null, p: SocialPostInput): Promise<"added" | "updated" | "unchanged"> {
   const existing = await client.socialPost.findUnique({ where: { externalId: p.externalId } });
-  const raw = p.raw === undefined ? undefined : (p.raw as object);
+  const raw = p.raw === undefined ? undefined : ({ ...(p.raw as object), publishedAtApprox: p.publishedAtApprox === true } as object);
   if (!existing) {
     await client.socialPost.create({
       data: {
