@@ -92,6 +92,24 @@ const youtubeChannel = z.object({
   featuredVideoUrl: z.string().optional(),
 });
 
+/** Color hex `#rrggbb` (los valores van tal cual a `<style id="site-theme">`: nada más). */
+const hexColor = z.string().regex(/^#[0-9a-fA-F]{6}$/, "Color hex #rrggbb");
+
+/** Colores del sitio (Admin → Sitio → «Tema y colores»); los presets viven en el frontend (lib/theme-presets.ts). */
+const theme = z.object({
+  preset: z.enum(["oro", "naranja", "mar", "coral", "custom"]),
+  accent: hexColor,
+  accentLight: hexColor,
+  accentHover: hexColor,
+  accentDark: hexColor,
+  secondary: hexColor,
+  secondaryLight: hexColor,
+  background: hexColor,
+  surface: hexColor,
+  footerBackground: hexColor,
+  textOnAccent: z.enum(["auto", "dark", "light"]),
+});
+
 export const siteContentSchema = z.object({
   brand: z.object({
     logoText: z.string().min(1),
@@ -335,6 +353,8 @@ export const siteContentSchema = z.object({
     homeSectionSubtitle: z.string(),
     homeCtaLabel: z.string().min(1),
   }),
+  /** Opcional: los configs publicados antes de 2026-10-18 no lo traen; lo rellenan las defaults. */
+  theme: theme.optional(),
   /** Código QR que lleva a la página (descargable desde el admin) */
   qr: z.object({
     /** URL destino; vacío = NEXT_PUBLIC_SITE_URL */
@@ -417,6 +437,7 @@ export function mergeSiteContent(base: SiteContent, patch: unknown): SiteContent
         : base.contactPage.pressPhotoUrls,
     },
     shop: { ...base.shop, ...p.shop },
+    theme: { ...base.theme, ...p.theme } as SiteContent["theme"],
     qr: { ...base.qr, ...p.qr },
   };
   const parsed = siteContentSchema.safeParse(merged);

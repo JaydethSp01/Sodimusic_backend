@@ -280,6 +280,20 @@ export const SITE_CONTENT_DEFAULTS: SiteContent = {
     homeSectionSubtitle: "Lleva el sello puesto. Productos seleccionados de la tienda.",
     homeCtaLabel: "Ver toda la tienda →",
   },
+  /** Paleta por defecto: preset «mar» (Mar Caribe). Espejo exacto del frontend `lib/site-defaults.ts`. */
+  theme: {
+    preset: "mar",
+    accent: "#19b3a6",
+    accentLight: "#8fe3db",
+    accentHover: "#4fd1c5",
+    accentDark: "#12867c",
+    secondary: "#ff7a59",
+    secondaryLight: "#ff9c82",
+    background: "#050404",
+    surface: "#131110",
+    footerBackground: "#0e100f",
+    textOnAccent: "auto",
+  },
   qr: {
     targetUrl: "",
     label: "Escanea y entra a Sodimusic",

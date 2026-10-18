@@ -122,3 +122,25 @@ describe("mergeSiteContent (home: latest, merch, lead, testimonials)", () => {
     expect(out.home.latest?.limit).toBe(5);
   });
 });
+
+describe("mergeSiteContent (theme)", () => {
+  it("un JSON publicado sin theme recibe el preset «mar» por defecto", () => {
+    const legacy = JSON.parse(JSON.stringify(SITE_CONTENT_DEFAULTS)) as Record<string, unknown>;
+    delete legacy["theme"];
+    const out = mergeSiteContent(SITE_CONTENT_DEFAULTS, legacy);
+    expect(out.theme).toEqual(SITE_CONTENT_DEFAULTS.theme);
+    expect(out.theme?.preset).toBe("mar");
+    expect(out.theme?.accent).toBe("#19b3a6");
+  });
+
+  it("fusiona theme parcial campo a campo", () => {
+    const out = mergeSiteContent(SITE_CONTENT_DEFAULTS, { theme: { preset: "custom", accent: "#FF6B00", textOnAccent: "light" } });
+    expect(out.theme).toMatchObject({ preset: "custom", accent: "#FF6B00", textOnAccent: "light", secondary: "#ff7a59", background: "#050404" });
+  });
+
+  it("rechaza hex inválidos y presets desconocidos y conserva base", () => {
+    expect(mergeSiteContent(SITE_CONTENT_DEFAULTS, { theme: { accent: "rgb(0,0,0)" } }).theme).toEqual(SITE_CONTENT_DEFAULTS.theme);
+    expect(mergeSiteContent(SITE_CONTENT_DEFAULTS, { theme: { accent: "#abc" } }).theme).toEqual(SITE_CONTENT_DEFAULTS.theme);
+    expect(mergeSiteContent(SITE_CONTENT_DEFAULTS, { theme: { preset: "neon" } }).theme).toEqual(SITE_CONTENT_DEFAULTS.theme);
+  });
+});
