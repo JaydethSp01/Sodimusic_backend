@@ -2,6 +2,7 @@ import type { PrismaClient } from "@prisma/client";
 import { prisma } from "./prisma.js";
 import { publishedContent } from "./site-config-db.js";
 import { ensureSocialSources } from "./social/sync.js";
+import { artistSeedsFromContent } from "./artists.js";
 
 /** Clave en AppMeta que marca que `youtube.channels` del SiteConfig ya se migró a YoutubeChannel. */
 export const CHANNELS_MIGRATED_KEY = "youtubeChannelsMigratedAt";
@@ -12,7 +13,7 @@ function alterIfExists(table: string, alter: string): string {
 }
 
 /**
- * SQL idempotente equivalente a las migraciones `products_and_media`, `v3_legal_channels_crm`, `app_meta` y `social_feed`.
+ * SQL idempotente equivalente a las migraciones `products_and_media`, `v3_legal_channels_crm`, `app_meta`, `social_feed` y `artists`.
  * El build de Vercel puede no alcanzar la BD (IPv6/pooler), así que las tablas y columnas
  * nuevas se garantizan también en runtime antes de usarlas. En una BD vacía no lanza.
  */
@@ -176,6 +177,36 @@ export const SHOP_SCHEMA_SQL: readonly string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS "SocialSource_kind_externalId_key" ON "SocialSource"("kind", "externalId")`,
   `CREATE UNIQUE INDEX IF NOT EXISTS "SocialPost_externalId_key" ON "SocialPost"("externalId")`,
   `CREATE INDEX IF NOT EXISTS "SocialPost_status_pinned_publishedAt_idx" ON "SocialPost"("status", "pinned", "publishedAt")`,
+
+  // ---- artistas (migración artists) ----
+  `CREATE TABLE IF NOT EXISTS "Artist" (
+    "id" TEXT NOT NULL,
+    "slug" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "role" TEXT NOT NULL DEFAULT 'Artista',
+    "shortBio" TEXT,
+    "bio" TEXT,
+    "photoUrl" TEXT,
+    "coverUrl" TEXT,
+    "city" TEXT,
+    "genres" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "spotifyUrl" TEXT,
+    "instagramUrl" TEXT,
+    "youtubeUrl" TEXT,
+    "tiktokUrl" TEXT,
+    "facebookUrl" TEXT,
+    "appleUrl" TEXT,
+    "youtubeChannelId" TEXT,
+    "aliases" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "featured" BOOLEAN NOT NULL DEFAULT false,
+    "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "sortOrder" INTEGER NOT NULL DEFAULT 0,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+    CONSTRAINT "Artist_pkey" PRIMARY KEY ("id")
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS "Artist_slug_key" ON "Artist"("slug")`,
+  `CREATE INDEX IF NOT EXISTS "Artist_status_featured_sortOrder_idx" ON "Artist"("status", "featured", "sortOrder")`,
 ];
 
 /** Ejecuta el SQL idempotente de tienda/media/v3/AppMeta contra `client`. No lanza en una BD vacía. */
@@ -264,12 +295,53 @@ export async function migrateChannelsFromSiteConfig(client: PrismaClient = prism
   return migrated;
 }
 
+/** Clave en AppMeta que marca que los artistas del SiteConfig ya se sembraron en la tabla Artist. */
+export const ARTISTS_SEEDED_KEY = "artistsSeededAt";
+
+async function markArtistsSeeded(client: PrismaClient, at: Date): Promise<void> {
+  await client.appMeta.upsert({
+    where: { key: ARTISTS_SEEDED_KEY },
+    create: { key: ARTISTS_SEEDED_KEY, value: at.toISOString() },
+    update: { value: at.toISOString() },
+  });
+}
+
+/**
+ * Siembra la tabla `Artist` desde `artists.*` del SiteConfig publicado UNA sola vez (flag `AppMeta.artistsSeededAt`):
+ * - `producerName/Genres/Bio/ImageUrl` → rol "Productor principal", destacado, sortOrder 0.
+ * - cada `members[]` → rol `member.role ?? "Crew"`, géneros = split de `genre` por "·", shortBio = `bio`, redes.
+ * El slug es `slugify(name)`; si ya existe (o se repite el nombre) no se duplica.
+ * Si el flag existe, no hace nada (borrar artistas en el admin no los "resucita").
+ * El SiteConfig no se modifica: la página /artists sigue usando sus textos de cabecera.
+ */
+export async function seedArtistsFromSiteConfig(client: PrismaClient = prisma): Promise<number> {
+  const flag = await client.appMeta.findUnique({ where: { key: ARTISTS_SEEDED_KEY } });
+  if (flag) {
+    return 0;
+  }
+  const now = new Date();
+  const row = await client.siteConfig.findUnique({ where: { id: "default" } });
+  const content = publishedContent(row);
+  const seeds = artistSeedsFromContent(content);
+  const existing = await client.artist.findMany({ select: { slug: true } });
+  const taken = new Set(existing.map((a) => a.slug));
+  let seeded = 0;
+  for (const seed of seeds) {
+    if (taken.has(seed.slug)) continue;
+    taken.add(seed.slug);
+    await client.artist.create({ data: seed });
+    seeded += 1;
+  }
+  await markArtistsSeeded(client, now);
+  return seeded;
+}
+
 let shopSchemaReady: Promise<void> | null = null;
 
 /**
- * Garantiza (una vez por instancia) que existen las tablas de tienda, media, canales, CRM, AppMeta y feed social,
+ * Garantiza (una vez por instancia) que existen las tablas de tienda, media, canales, CRM, AppMeta, feed social y artistas,
  * y las columnas v3 de Beat/Release/BookingSession; después migra los canales del SiteConfig
- * si aún no se hizo y siembra las fuentes del feed social (flags en AppMeta).
+ * si aún no se hizo, siembra los artistas desde el SiteConfig y las fuentes del feed social (flags en AppMeta).
  * Si falla, se descarta la promesa memoizada para reintentar en la siguiente petición
  * y el error se propaga al `onError` de Hono.
  */
@@ -285,6 +357,15 @@ export function ensureShopSchema(): Promise<void> {
       } catch (err) {
         // No bloquea el arranque: los canales se pueden crear desde el admin.
         console.warn("[schema] no se pudieron migrar los canales del SiteConfig", err);
+      }
+      try {
+        const seeded = await seedArtistsFromSiteConfig(prisma);
+        if (seeded > 0) {
+          console.log(`[schema] ${seeded} artista(s) sembrados desde el SiteConfig`);
+        }
+      } catch (err) {
+        // No bloquea el arranque: los artistas se pueden crear desde el admin.
+        console.warn("[schema] no se pudieron sembrar los artistas desde el SiteConfig", err);
       }
       try {
         const seeded = await ensureSocialSources(prisma);

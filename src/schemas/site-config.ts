@@ -31,6 +31,55 @@ const stat = z.object({
 
 const optionalUrlOrPath = z.string().optional();
 
+/** Home · "Lo último" (sección única que sustituye a "Últimas producciones" + "Novedades"). */
+const homeLatest = z.object({
+  eyebrow: z.string(),
+  title: z.string().min(1),
+  subtitle: z.string(),
+  /** "feed" = novedades automáticas (YouTube/Facebook) · "productions" = producciones destacadas · "both" = destacada del feed + producciones */
+  source: z.enum(["feed", "productions", "both"]),
+  limit: z.number().int().min(1).max(12),
+  ctaLabel: z.string(),
+  ctaHref: z.string(),
+  secondaryCtaLabel: z.string(),
+  secondaryCtaHref: z.string(),
+});
+
+/** Home · merch (productos de la tienda en la portada). */
+const homeMerch = z.object({
+  title: z.string().min(1),
+  subtitle: z.string(),
+  ctaLabel: z.string(),
+  limit: z.number().int().min(1).max(12),
+  onlyFeatured: z.boolean(),
+});
+
+/** Home · captación de leads (formulario de cotización). */
+const homeLead = z.object({
+  enabled: z.boolean(),
+  eyebrow: z.string(),
+  title: z.string().min(1),
+  subtitle: z.string(),
+  /** Beneficios (3 ideales) */
+  bullets: z.array(z.string()),
+  ctaLabel: z.string().min(1),
+  whatsappLabel: z.string(),
+  successMessage: z.string(),
+});
+
+/** Home · testimonios (vacío → sección oculta). */
+const homeTestimonials = z.object({
+  title: z.string(),
+  items: z.array(
+    z.object({
+      quote: z.string().min(1),
+      author: z.string().min(1),
+      role: z.string().optional(),
+      avatarUrl: z.string().optional(),
+    }),
+  ),
+});
+
 const youtubeChannel = z.object({
   name: z.string().min(1),
   /** URL pública del canal (https://www.youtube.com/@handle o /channel/UC…) */
@@ -80,6 +129,11 @@ export const siteContentSchema = z.object({
     milestones: z.array(milestone).min(1),
     /** Cifras animadas bajo «Quiénes somos» */
     stats: z.array(stat).min(1),
+    /** Opcionales: los configs publicados antes de 2026-10-18 no las traen; las rellenan las defaults. */
+    latest: homeLatest.optional(),
+    merch: homeMerch.optional(),
+    lead: homeLead.optional(),
+    testimonials: homeTestimonials.optional(),
   }),
   footer: z.object({
     tagline: z.string().min(1),
@@ -306,6 +360,19 @@ export function mergeSiteContent(base: SiteContent, patch: unknown): SiteContent
       ...p.home,
       milestones: p.home?.milestones?.length ? p.home.milestones : base.home.milestones,
       stats: p.home?.stats?.length ? p.home.stats : base.home.stats,
+      // Secciones nuevas: fusión campo a campo sobre las defaults (un JSON parcial no las vacía).
+      latest: { ...base.home.latest, ...p.home?.latest } as SiteContent["home"]["latest"],
+      merch: { ...base.home.merch, ...p.home?.merch } as SiteContent["home"]["merch"],
+      lead: {
+        ...base.home.lead,
+        ...p.home?.lead,
+        bullets: Array.isArray(p.home?.lead?.bullets) ? p.home.lead.bullets : base.home.lead?.bullets ?? [],
+      } as SiteContent["home"]["lead"],
+      testimonials: {
+        ...base.home.testimonials,
+        ...p.home?.testimonials,
+        items: Array.isArray(p.home?.testimonials?.items) ? p.home.testimonials.items : base.home.testimonials?.items ?? [],
+      } as SiteContent["home"]["testimonials"],
     },
     footer: { ...base.footer, ...p.footer },
     seo: { ...base.seo, ...p.seo },

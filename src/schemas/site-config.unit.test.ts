@@ -81,3 +81,44 @@ describe("mergeSiteContent (v3: legal, contactPage, youtube)", () => {
     expect(out.artists.members[0]?.spotifyUrl).toBe("https://open.spotify.com/x");
   });
 });
+
+describe("mergeSiteContent (home: latest, merch, lead, testimonials)", () => {
+  it("un JSON publicado sin las secciones nuevas las recibe de las defaults", () => {
+    const legacy = JSON.parse(JSON.stringify(SITE_CONTENT_DEFAULTS)) as { home: Record<string, unknown> };
+    delete legacy.home["latest"];
+    delete legacy.home["merch"];
+    delete legacy.home["lead"];
+    delete legacy.home["testimonials"];
+    const out = mergeSiteContent(SITE_CONTENT_DEFAULTS, legacy);
+    expect(out.home.latest).toEqual(SITE_CONTENT_DEFAULTS.home.latest);
+    expect(out.home.merch).toEqual(SITE_CONTENT_DEFAULTS.home.merch);
+    expect(out.home.lead).toEqual(SITE_CONTENT_DEFAULTS.home.lead);
+    expect(out.home.testimonials).toEqual({ title: "Lo que dicen de Sodimusic", items: [] });
+    expect(out.home.latest?.source).toBe("feed");
+    expect(out.home.latest?.limit).toBe(5);
+    expect(out.home.merch?.limit).toBe(4);
+    expect(out.home.lead?.bullets).toHaveLength(3);
+  });
+
+  it("fusiona parciales campo a campo y acepta testimonios", () => {
+    const out = mergeSiteContent(SITE_CONTENT_DEFAULTS, {
+      home: {
+        latest: { source: "both", limit: 3 },
+        merch: { onlyFeatured: true },
+        lead: { enabled: false, bullets: ["Solo uno"] },
+        testimonials: { items: [{ quote: "Brutal", author: "El Pady", role: "Artista" }] },
+      },
+    });
+    expect(out.home.latest).toMatchObject({ source: "both", limit: 3, eyebrow: "Lo último", ctaHref: "/productions" });
+    expect(out.home.merch).toMatchObject({ onlyFeatured: true, limit: 4, title: "Merch oficial" });
+    expect(out.home.lead).toMatchObject({ enabled: false, bullets: ["Solo uno"], ctaLabel: "Quiero una cotización" });
+    expect(out.home.testimonials?.items).toEqual([{ quote: "Brutal", author: "El Pady", role: "Artista" }]);
+    expect(out.home.aboutTitle).toBe(SITE_CONTENT_DEFAULTS.home.aboutTitle);
+  });
+
+  it("rechaza source/limit inválidos y conserva base", () => {
+    const out = mergeSiteContent(SITE_CONTENT_DEFAULTS, { home: { latest: { source: "random", limit: 99 } } });
+    expect(out.home.latest?.source).toBe("feed");
+    expect(out.home.latest?.limit).toBe(5);
+  });
+});

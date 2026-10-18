@@ -32,6 +32,8 @@ import {
   channelUpdateSchema,
   parseYoutubeChannelUrl,
 } from "./schemas/channel.js";
+import { artistCreateSchema, artistReorderSchema, artistUpdateSchema } from "./schemas/artist.js";
+import { artistSearchTerms, artistSlug, nameMatchWhere } from "./lib/artists.js";
 import { newsletterSubscribeSchema, newsletterUnsubscribeSchema } from "./schemas/newsletter.js";
 import { contactMessageSchema, contactStatusSchema } from "./schemas/contact.js";
 import { currentPolicyVersion, draftContent, ensureSiteConfigRow, publishedContent } from "./lib/site-config-db.js";
@@ -99,6 +101,12 @@ const SOCIAL_POST_PUBLIC_SELECT = {
   createdAt: true,
   updatedAt: true,
 } as const;
+
+/** Máximo de producciones / lanzamientos / posts asociados en `GET /api/artists/:slug`. */
+const ARTIST_RELATED_LIMIT = 24;
+
+/** Asunto de ContactMessage que cuenta como lead (cotización desde la home). */
+const LEAD_SUBJECT = "COTIZACION";
 
 /** Base pública de esta API para enlaces en correos: API_URL, o el origen de la petición (proxy-aware). */
 function apiBaseUrl(c: { req: { url: string; header(name: string): string | undefined } }): string {
@@ -672,6 +680,80 @@ export function createApp(): Hono {
     return c.json(channel);
   });
 
+  // ---------- Artistas (público) ----------
+
+  app.get("/api/artists", async (c) => {
+    await ensureShopSchema();
+    const where: Prisma.ArtistWhereInput = { status: "ACTIVE" };
+    if (c.req.query("featured") === "1") {
+      where.featured = true;
+    }
+    const role = c.req.query("role")?.trim();
+    if (role && role !== "Todos") {
+      where.role = { equals: role, mode: "insensitive" };
+    }
+    const items = await prisma.artist.findMany({
+      where,
+      orderBy: [{ featured: "desc" }, { sortOrder: "asc" }, { name: "asc" }],
+    });
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
+    return c.json({ items });
+  });
+
+  /** Detalle + contenido asociado por nombre/alias (producciones, lanzamientos, posts del feed). */
+  app.get("/api/artists/:slug", async (c) => {
+    await ensureShopSchema();
+    const slug = c.req.param("slug").trim().toLowerCase();
+    const artist = await prisma.artist.findUnique({ where: { slug } });
+    if (!artist || artist.status !== "ACTIVE") {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    const terms = artistSearchTerms(artist);
+    const empty = <T,>(): Promise<T[]> => Promise.resolve([]);
+
+    const postOr: Prisma.SocialPostWhereInput[] = [
+      ...nameMatchWhere("author", terms),
+      ...nameMatchWhere("title", terms),
+    ];
+    if (artist.youtubeChannelId) {
+      const sources = await prisma.socialSource.findMany({
+        where: { kind: "YOUTUBE_CHANNEL", externalId: artist.youtubeChannelId },
+        select: { id: true },
+      });
+      if (sources.length > 0) {
+        postOr.push({ sourceId: { in: sources.map((s) => s.id) } });
+      }
+    }
+
+    const [productions, releases, posts] = await Promise.all([
+      terms.length > 0
+        ? prisma.production.findMany({
+            where: { OR: nameMatchWhere("artistName", terms) },
+            orderBy: [{ year: "desc" }, { createdAt: "desc" }],
+            take: ARTIST_RELATED_LIMIT,
+          })
+        : empty<never>(),
+      terms.length > 0
+        ? prisma.release.findMany({
+            where: { OR: nameMatchWhere("artistName", terms) },
+            orderBy: [{ releaseYear: "desc" }, { createdAt: "desc" }],
+            take: ARTIST_RELATED_LIMIT,
+          })
+        : empty<never>(),
+      postOr.length > 0
+        ? prisma.socialPost.findMany({
+            where: { status: "VISIBLE", OR: postOr },
+            orderBy: [{ publishedAt: "desc" }],
+            take: ARTIST_RELATED_LIMIT,
+            select: SOCIAL_POST_PUBLIC_SELECT,
+          })
+        : empty<never>(),
+    ]);
+
+    c.header("Cache-Control", PUBLIC_CACHE_CONTROL);
+    return c.json({ artist, productions, releases, posts });
+  });
+
   app.get("/api/productions", async (c) => {
     const genre = c.req.query("genre");
     const year = c.req.query("year");
@@ -1003,6 +1085,8 @@ export function createApp(): Hono {
       beatInterests30d,
       socialPostsVisible,
       socialLastSyncAt,
+      artistsActive,
+      leadsNew,
     ] = await Promise.all([
       prisma.bookingSession.count({ where: { status: "PENDING" } }),
       prisma.bookingSession.count({
@@ -1019,6 +1103,8 @@ export function createApp(): Hono {
       prisma.beatInterest.count({ where: { createdAt: { gte: since30d } } }),
       prisma.socialPost.count({ where: { status: "VISIBLE" } }),
       getSocialSyncAt().catch(() => null),
+      prisma.artist.count({ where: { status: "ACTIVE" } }),
+      prisma.contactMessage.count({ where: { status: "NEW", subject: LEAD_SUBJECT } }),
     ]);
 
     let pageViewsByDay: { date: string; count: number }[] = [];
@@ -1073,6 +1159,8 @@ export function createApp(): Hono {
       beatInterests30d,
       socialPostsVisible,
       socialLastSyncAt: socialLastSyncAt ? socialLastSyncAt.toISOString() : null,
+      artistsActive,
+      leadsNew,
       pageViewsTotal,
       pageViewsLast7Days,
       pageViewsByDay,
@@ -1947,6 +2035,172 @@ export function createApp(): Hono {
     await ensureShopSchema();
     const id = c.req.param("id");
     const deleted = await prisma.youtubeChannel.deleteMany({ where: { id } });
+    if (deleted.count === 0) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    return c.json({ ok: true });
+  });
+
+  // ---------- Artistas (admin) ----------
+
+  admin.get("/artists", async (c) => {
+    await ensureShopSchema();
+    const { page, pageSize, skip } = pagination(
+      { page: c.req.query("page"), pageSize: c.req.query("pageSize") },
+      { pageSize: 50, max: 200 },
+    );
+    const q = searchTerm(c.req.query("q"));
+    const status = c.req.query("status");
+    const where: Prisma.ArtistWhereInput = {};
+    if (status && status !== "Todos") {
+      where.status = status;
+    }
+    if (q) {
+      where.OR = [
+        { name: { contains: q, mode: "insensitive" } },
+        { slug: { contains: q, mode: "insensitive" } },
+        { role: { contains: q, mode: "insensitive" } },
+        { city: { contains: q, mode: "insensitive" } },
+        { aliases: { has: q } },
+      ];
+    }
+    const [items, total] = await Promise.all([
+      prisma.artist.findMany({
+        where,
+        orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+        skip,
+        take: pageSize,
+      }),
+      prisma.artist.count({ where }),
+    ]);
+    return c.json({ items, total, page, pageSize });
+  });
+
+  admin.post("/artists", async (c) => {
+    await ensureShopSchema();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = artistCreateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const d = parsed.data;
+    let slug: string;
+    if (d.slug) {
+      if (await prisma.artist.findUnique({ where: { slug: d.slug }, select: { id: true } })) {
+        return c.json({ error: "Ya existe un artista con ese slug" }, 409);
+      }
+      slug = d.slug;
+    } else {
+      slug = await uniqueSlug(
+        artistSlug(d.name) || "artista",
+        async (s) => (await prisma.artist.findUnique({ where: { slug: s }, select: { id: true } })) !== null,
+      );
+    }
+    const row = await prisma.artist.create({
+      data: {
+        slug,
+        name: d.name,
+        role: d.role,
+        shortBio: d.shortBio,
+        bio: d.bio,
+        photoUrl: d.photoUrl ?? null,
+        coverUrl: d.coverUrl ?? null,
+        city: d.city,
+        genres: d.genres,
+        spotifyUrl: d.spotifyUrl ?? null,
+        instagramUrl: d.instagramUrl ?? null,
+        youtubeUrl: d.youtubeUrl ?? null,
+        tiktokUrl: d.tiktokUrl ?? null,
+        facebookUrl: d.facebookUrl ?? null,
+        appleUrl: d.appleUrl ?? null,
+        youtubeChannelId: d.youtubeChannelId ?? null,
+        aliases: d.aliases,
+        featured: d.featured,
+        status: d.status,
+        sortOrder: d.sortOrder,
+      },
+    });
+    return c.json(row, 201);
+  });
+
+  /** Debe ir antes de PATCH/DELETE /artists/:id para que "reorder" no se interprete como id. */
+  admin.post("/artists/reorder", async (c) => {
+    await ensureShopSchema();
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = artistReorderSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos" }, 400);
+    }
+    const ids = [...new Set(parsed.data.ids)];
+    await prisma.$transaction(
+      ids.map((id, index) => prisma.artist.updateMany({ where: { id }, data: { sortOrder: index } })),
+    );
+    return c.json({ ok: true, count: ids.length });
+  });
+
+  admin.patch("/artists/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "JSON inválido" }, 400);
+    }
+    const parsed = artistUpdateSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "Datos inválidos", issues: parsed.error.flatten() }, 400);
+    }
+    const existing = await prisma.artist.findUnique({ where: { id } });
+    if (!existing) {
+      return c.json({ error: "No encontrado" }, 404);
+    }
+    const d = parsed.data;
+    if (d.slug !== undefined && d.slug !== existing.slug) {
+      const clash = await prisma.artist.findUnique({ where: { slug: d.slug }, select: { id: true } });
+      if (clash && clash.id !== id) {
+        return c.json({ error: "Ya existe un artista con ese slug" }, 409);
+      }
+    }
+    const data: Prisma.ArtistUpdateInput = {};
+    if (d.name !== undefined) data.name = d.name;
+    if (d.slug !== undefined) data.slug = d.slug;
+    if (d.role !== undefined) data.role = d.role;
+    if (d.shortBio !== undefined) data.shortBio = d.shortBio;
+    if (d.bio !== undefined) data.bio = d.bio;
+    if (d.photoUrl !== undefined) data.photoUrl = d.photoUrl;
+    if (d.coverUrl !== undefined) data.coverUrl = d.coverUrl;
+    if (d.city !== undefined) data.city = d.city;
+    if (d.genres !== undefined) data.genres = d.genres;
+    if (d.spotifyUrl !== undefined) data.spotifyUrl = d.spotifyUrl;
+    if (d.instagramUrl !== undefined) data.instagramUrl = d.instagramUrl;
+    if (d.youtubeUrl !== undefined) data.youtubeUrl = d.youtubeUrl;
+    if (d.tiktokUrl !== undefined) data.tiktokUrl = d.tiktokUrl;
+    if (d.facebookUrl !== undefined) data.facebookUrl = d.facebookUrl;
+    if (d.appleUrl !== undefined) data.appleUrl = d.appleUrl;
+    if (d.youtubeChannelId !== undefined) data.youtubeChannelId = d.youtubeChannelId;
+    if (d.aliases !== undefined) data.aliases = d.aliases;
+    if (d.featured !== undefined) data.featured = d.featured;
+    if (d.status !== undefined) data.status = d.status;
+    if (d.sortOrder !== undefined) data.sortOrder = d.sortOrder;
+    const updated = await prisma.artist.update({ where: { id }, data });
+    return c.json(updated);
+  });
+
+  admin.delete("/artists/:id", async (c) => {
+    await ensureShopSchema();
+    const id = c.req.param("id");
+    const deleted = await prisma.artist.deleteMany({ where: { id } });
     if (deleted.count === 0) {
       return c.json({ error: "No encontrado" }, 404);
     }

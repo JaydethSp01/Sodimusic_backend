@@ -310,3 +310,38 @@ model SocialPost {
 
   @@index([status, pinned, publishedAt])
 }
+
+/// Artista del sello (productor principal, crew, aliados). Producciones/releases/posts se asocian por nombre o alias.
+model Artist {
+  id               String   @id @default(cuid())
+  slug             String   @unique
+  name             String
+  /// Productor principal | Artista | Crew | Aliado
+  role             String   @default("Artista")
+  /// 1–2 frases (tarjetas)
+  shortBio         String?
+  /// Párrafos separados por \n\n
+  bio              String?
+  photoUrl         String?
+  coverUrl         String?
+  city             String?
+  genres           String[] @default([])
+  spotifyUrl       String?
+  instagramUrl     String?
+  youtubeUrl       String?
+  tiktokUrl        String?
+  facebookUrl      String?
+  appleUrl         String?
+  /// Para listar sus videos: UC… (opcional)
+  youtubeChannelId String?
+  /// Alias para asociar producciones/releases por nombre (p. ej. ["J Col", "J Col El Crazy"])
+  aliases          String[] @default([])
+  featured         Boolean  @default(false)
+  /// ACTIVE | HIDDEN
+  status           String   @default("ACTIVE")
+  sortOrder        Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status, featured, sortOrder])
+}
